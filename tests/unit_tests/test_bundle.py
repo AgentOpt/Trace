@@ -421,8 +421,10 @@ def run(trainable=False):
     assert len(global_list) == old_len + 1
 
 
+def test_trainable_FALSE():
+    print("Running tests with trainable=False")
+    run(trainable=False)
 
-print("Running tests with trainable=False")
-run(trainable=False)
-print("Running tests with trainable=True")
-run(trainable=True)
+def test_trainable_TRUE():
+    print("Running tests with trainable=True")
+    run(trainable=True)

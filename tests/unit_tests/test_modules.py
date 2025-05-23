@@ -22,7 +22,6 @@ class BaseModule(Module):
     def forward(self, i):
         return self.method1(i)
 
-
 base = BaseModule()
 assert len(base.parameters()) == 2
 assert len(base.parameters_dict()) == 2
@@ -70,9 +69,10 @@ class BaseClass:
         return self.method1(i)
 
 
-base = BaseClass()
-assert len(base.parameters()) == 2
-assert len(base.parameters_dict()) == 2
+def test_model_decorator():
+    base = BaseClass()
+    assert len(base.parameters()) == 2
+    assert len(base.parameters_dict()) == 2
 
 
 def dummy_method():
@@ -93,31 +93,33 @@ class ChildClass(BaseClass):
     def method2(self, y):
         return y
 
-child = ChildClass()
-print(child.parameters_dict().keys())
-assert len(child.parameters()) == 6
-assert len(child.parameters_dict()) == 5
+def test_inheritance():
+    child = ChildClass()
+    assert len(child.parameters()) == 6, f"Expected 6 parameters, got {child.parameters_dict()}"
+    assert len(child.parameters_dict()) == 5
 
 
 # test save and load
-child._extra_param._data = 2  # simulate data changes
-child._extra_method.parameter._data = "fake method" # simulate data changes
-child._base._param._data = 3  # simulate data changes
-child._new_param = node(1, trainable=True)  # simulate adding new parameter
-assert len(child.parameters()) == 7
+def test_save_load_pickle():
+    child = ChildClass()
+    child._extra_param._data = 2  # simulate data changes
+    child._extra_method.parameter._data = "fake method" # simulate data changes
+    child._base._param._data = 3  # simulate data changes
+    child._new_param = node(1, trainable=True)  # simulate adding new parameter
+    assert len(child.parameters()) == 7
 
-try:
-    child.save("test.pkl")
-except AttributeError:
-    print("Cannot save attributes of classes created by @model decorator")
-    pass
+    try:
+        child.save("test.pkl")
+    except AttributeError:
+        print("Cannot save attributes of classes created by @model decorator")
+        pass
 
-child._base = BaseModule()  # can save Modules
-child._base._param._data = 3  # simulate data changes
-try:
-    child.save("test.pkl")
-except AttributeError:
-    print("Cannot save classes created by @model decorator")
+    child._base = BaseModule()  # can save Modules
+    child._base._param._data = 3  # simulate data changes
+    try:
+        child.save("test.pkl")
+    except AttributeError:
+        print("Cannot save classes created by @model decorator")
 
 # child2 = ChildClass()
 # child2.load("test.pkl")
@@ -138,7 +140,7 @@ class NonModuleBaseClass():
         return 1
 
 @model
-class ChildClass(NonModuleBaseClass):
+class ChildClass2(NonModuleBaseClass):
     def __init__(self):
         super().__init__()
 
@@ -149,7 +151,8 @@ class ChildClass(NonModuleBaseClass):
     def forward(self, i):
         return self.method2(i)
 
-child = ChildClass()
-result = child.forward(1)
-assert result._data == 2
+def test_multiple_inheritance():
+    child = ChildClass2()
+    result = child.forward(1)
+    assert result._data == 2
 

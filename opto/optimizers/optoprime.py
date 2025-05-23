@@ -13,6 +13,7 @@ from opto.optimizers.buffers import FIFOBuffer
 from opto.utils.llm import AbstractModel, LLM
 
 from black import format_str, FileMode
+import ast
 
 def get_fun_name(node: MessageNode):
     if isinstance(node.info, dict) and "fun_name" in node.info:
@@ -149,11 +150,11 @@ class OptoPrime(Optimizer):
 
         Specifically, a problem will be composed of the following parts:
         - #Instruction: the instruction which describes the things you need to do or the question you should answer.
-        - #Code: the code defined in the problem.
+        - #Code: the code defined in the problem that you can change/tweak (trainable).
         - #Documentation: the documentation of each function used in #Code. The explanation might be incomplete and just contain high-level description. You can use the values in #Others to help infer how those functions work.
-        - #Variables: the input variables that you can change.
+        - #Variables: the input variables that you can change/tweak (trainable).
         - #Constraints: the constraints or descriptions of the variables in #Variables.
-        - #Inputs: the values of other inputs to the code, which are not changeable.
+        - #Inputs: the values of fixed inputs to the code, which CANNOT be changed (fixed).
         - #Others: the intermediate values created through the code execution.
         - #Outputs: the result of the code output.
         - #Feedback: the feedback about the code's execution result.
@@ -167,7 +168,7 @@ class OptoPrime(Optimizer):
     )
 
     # Optimization
-    default_objective = "You need to change the <value> of the variables in #Variables to improve the output in accordance to #Feedback."
+    default_objective = "You need to change the <value> of the variables/codes in #Variables to improve the output in accordance to #Feedback. IMPORTANT: #Inputs are fixed, you cannot change them."
 
     output_format_prompt = dedent(
         """
@@ -470,7 +471,7 @@ class OptoPrime(Optimizer):
 
         return update_dict
 
-    def construct_update_dict(
+    def construct_update_dict( # Legacy implementation of the function / please check new version below
         self, suggestion: Dict[str, Any]
     ) -> Dict[ParameterNode, Any]:
         """Convert the suggestion in text into the right data type."""
@@ -492,6 +493,60 @@ class OptoPrime(Optimizer):
                         )
                     else:
                         raise e
+        return update_dict
+
+    # TODO: validate this new implementation of construct_update_dict to better capture params via _find_key
+    def construct_update_dict(
+        self, suggestion: Dict[str, Any]
+    ) -> Dict[ParameterNode, Any]:
+        """Convert the suggestion in text into the right data type."""
+
+        def _find_key(node_name: str, sugg: Dict[str, Any]) -> str | None:
+            """ Return the key in *suggestion* that corresponds to *node_name*.
+            -     Exact match first.
+            -     Otherwise allow the `__code8`  ↔ `__code:8` alias by
+                stripping one optional ':' between the stem and the digits.
+            """
+            if node_name in sugg:
+                return node_name
+
+            # Normalise both sides once:  "__code:8" -> "__code8"
+            norm = re.sub(r":(?=\d+$)", "", node_name)
+            for k in sugg:
+                if re.sub(r":(?=\d+$)", "", k) == norm:
+                    return k
+            return None
+
+        update_dict: Dict[ParameterNode, Any] = {}
+
+        for node in self.parameters:
+            if not node.trainable:
+                continue
+            key = _find_key(node.py_name, suggestion)
+            if key is None:
+                continue
+            try:
+                raw_val = suggestion[key]
+                # Re-format code strings for consistency
+                if isinstance(raw_val, str) and "def" in raw_val:
+                    raw_val = format_str(raw_val, mode=FileMode())
+                # Best-effort literal conversion (e.g. "1" -> 1)
+                target_type = type(node.data)
+                if isinstance(raw_val, str) and target_type is not str:
+                    try:
+                        raw_val = target_type(ast.literal_eval(raw_val))
+                    except Exception:  # fall back silently
+                        pass
+                update_dict[node] = target_type(raw_val)
+            except (ValueError, KeyError, TypeError) as e:
+                if self.ignore_extraction_error:
+                    warnings.warn(
+                        f"Cannot convert the suggestion '{suggestion[key]}' "
+                        f"for {node.py_name}: {e}"
+                    )
+                else:
+                    raise
+
         return update_dict
 
     def extract_llm_suggestion(self, response: str):

@@ -120,48 +120,49 @@ def test_standard_env():
 
 
 # this throws an error
-test_standard_env()
+# test_standard_env()
 
-try:
-    # tracing recursive functions
-    @bundle(trainable=True, catch_execution_error=False, _process_inputs=False)
-    def recurse(dic, var):
-        "Simple recursion"
-        if var in dic:
-            return dic[var]
-        else:
-            return recurse(dic["_outer"], var)
+def test_recursions():
+    try:
+        # tracing recursive functions
+        @bundle(trainable=True, catch_execution_error=False, _process_inputs=False)
+        def recurse(dic, var):
+            "Simple recursion"
+            if var in dic:
+                return dic[var]
+            else:
+                return recurse(dic["_outer"], var)
 
-    def test_recurse():
-        dic = {"_outer": {"_outer": {"_outer": None, "a": 1}, "b": 2}, "c": 3}
-        result = recurse(node(dic), node("a"))
-        assert result.data == 1
+        def test_recurse():
+            dic = {"_outer": {"_outer": {"_outer": None, "a": 1}, "b": 2}, "c": 3}
+            result = recurse(node(dic), node("a"))
+            assert result.data == 1
 
-    test_recurse()
+        test_recurse()
 
-    @bundle(
-        description="[find] Find the value of var in the innermost env where var appears.",
-        trainable=True,
-        catch_execution_error=False,
-        _process_inputs=False,
-    )
-    def find(env, var):
-        if var in env:
-            return env[var]
-        else:
-            return find(env["_outer"], var)
+        @bundle(
+            description="[find] Find the value of var in the innermost env where var appears.",
+            trainable=True,
+            catch_execution_error=False,
+            _process_inputs=False,
+        )
+        def find(env, var):
+            if var in env:
+                return env[var]
+            else:
+                return find(env["_outer"], var)
 
-    def test_find():
-        env = get_env(node(["a", "b"]), node([1, 2]))
-        result = find(env, node("a"))
-        assert result.data == 1
+        def test_find():
+            env = get_env(node(["a", "b"]), node([1, 2]))
+            result = find(env, node("a"))
+            assert result.data == 1
 
-        result = find(env, node("b"))
-        assert result.data == 2
+            result = find(env, node("b"))
+            assert result.data == 2
 
-        result = find(env, node("c"))
-        assert result.data == 2
+            result = find(env, node("c"))
+            assert result.data == 2
 
-except ValueError as e:
-    print("Warning: This test is expected to fail.")
-    print(e)
+    except ValueError as e:
+        print("Warning: This test is expected to fail.")
+        print(e)

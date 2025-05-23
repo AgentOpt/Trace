@@ -1,7 +1,12 @@
 from opto.trace import node, bundle
-from opto.trace.modules import apply_op
-from opto.trace.modules import NodeContainer
+#from opto.trace.modules import apply_op
+#from opto.trace.modules import NodeContainer
+from opto.trace.containers import NodeContainer
+from opto.trace.broadcast import apply_op
 import opto.trace.operators as ops
+import shutil, pytest
+
+GRAPHVIZ_AVAILABLE = shutil.which("dot") is not None
 
 # ========== Case 1 ==========
 
@@ -19,7 +24,7 @@ def func_a(a):
 def func_b(b):
     return func_a(b) + 1
 
-
+@pytest.mark.skipif(not GRAPHVIZ_AVAILABLE, reason="Graphviz 'dot' executable not found, skipping visualization test")
 def test_nested_function_visibility():
     x = node(3)
     y = func_b(x)
@@ -27,7 +32,7 @@ def test_nested_function_visibility():
     fig.render()
 
 
-test_nested_function_visibility()
+# test_nested_function_visibility()
 
 # ========== Case 2 ==========
 

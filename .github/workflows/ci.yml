@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, dev, ci-multi ]
+  pull_request:
+    branches: [ main, dev, ci-multi ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 1) Restore any cached Ollama data (~2 GB)
+    - name: Restore Ollama cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ollama
+        key: qwen3-4b-gguf-v1
+
+    # 2) Install Ollama
+    - name: Install Ollama
+      run: |
+        curl -fsSL https://ollama.com/install.sh | sh
+
+    # 3) Drop-in override to bump context window to 4k tokens
+    - name: Configure Ollama for 4K context
+      run: |
+        sudo mkdir -p /etc/systemd/system/ollama.service.d
+        sudo tee /etc/systemd/system/ollama.service.d/override.conf << 'EOF'
+        [Service]
+        ExecStart=
+        ExecStart=/usr/local/bin/ollama serve --num_ctx 4000
+        EOF
+        sudo systemctl daemon-reload
+
+    # 4) Enable & start the systemd-managed Ollama daemon
+    - name: Enable & start Ollama
+      run: |
+        sudo systemctl enable --now ollama
+
+    # 5) Pull the phi4-mini:3.8b model (uses cache if present)
+    - name: Pull phi4-mini:3.8b model
+      run: ollama pull phi4-mini:3.8b
+
+    # 6) Set up Python & install dependencies
+    - uses: actions/setup-python@v5
+      with: { python-version: "3.10" }
+    - name: Install Python deps
+      run: |
+        pip install -e .
+        pip install pytest datasets
+
+    # 7) Point LiteLLM/OpenAI to our local Ollama server
+    - name: Configure LLM env
+      run: |
+        echo "OPENAI_API_KEY=ollama"             >> $GITHUB_ENV
+        echo "OPENAI_API_BASE=http://localhost:11434/v1" >> $GITHUB_ENV
+        echo "TRACE_LITELLM_MODEL=openai/phi4-mini:3.8b" >> $GITHUB_ENV
+
+    # 8) Run all Trace unit tests
+    - name: Run unit tests of Optimizers
+      run: pytest tests/unit_tests/
+
+    # 9) Run basic tests for each optimizer (some will fail due to the small LLM model chosen for free GitHub CI)
+    - name: Run optimizers test suite
+      run: pytest tests/llm_optimizers_tests/test_optimizer.py || true 
+      continue-on-error: true

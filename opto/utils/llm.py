@@ -12,7 +12,6 @@ try:
 except ImportError:
     pass
 
-
 class AbstractModel:
     """
     A minimal abstraction of a model api that refreshes the model every
@@ -228,17 +227,30 @@ class CustomLLM(AbstractModel):
             config['model'] = self.model_name
         return self._model.chat.completions.create(**config)
 
+# Registry of available backends
+_LLM_REGISTRY = {
+    "LiteLLM": LiteLLM,
+    "AutoGen": AutoGenLLM,
+    "CustomLLM": CustomLLM,
+}
 
-
-TRACE_DEFAULT_LLM_BACKEND = os.getenv('TRACE_DEFAULT_LLM_BACKEND', 'LiteLLM')
-if TRACE_DEFAULT_LLM_BACKEND == 'AutoGen':
-    print("Using AutoGen as the default LLM backend.")
-    LLM = AutoGenLLM
-elif TRACE_DEFAULT_LLM_BACKEND == 'CustomLLM':
-    print("Using CustomLLM as the default LLM backend.")
-    LLM = CustomLLM
-elif TRACE_DEFAULT_LLM_BACKEND == 'LiteLLM':
-    print("Using LiteLLM as the default LLM backend.")
-    LLM = LiteLLM
-else:
-    raise ValueError(f"Unknown LLM backend: {TRACE_DEFAULT_LLM_BACKEND}")
+class LLM:
+    """
+    A unified entry point for all supported LLM backends.
+    
+    Usage:
+      # pick by env var (default: LiteLLM)
+      llm = LLM()
+      # or override explicitly
+      llm = LLM(backend="AutoGen", config_list=my_configs)
+    """
+    def __new__(cls, *args, backend: str = None, **kwargs):
+        # Decide which backend to use
+        name = backend or os.getenv("TRACE_DEFAULT_LLM_BACKEND", "LiteLLM")
+        try:
+            backend_cls = _LLM_REGISTRY[name]
+        except KeyError:
+            raise ValueError(f"Unknown LLM backend: {name}. "
+                             f"Valid options are: {list(_LLM_REGISTRY)}")
+        # Instantiate and return the chosen subclass
+        return backend_cls(*args, **kwargs)

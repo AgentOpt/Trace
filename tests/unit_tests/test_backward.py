@@ -4,42 +4,42 @@ from opto.trace.nodes import GRAPH, Node
 from opto.trace.propagators import GraphPropagator
 from opto.optimizers.optoprime import node_to_function_feedback
 
+def test_feedback_propagation():
+    x = node(1, name="x", trainable=True)
+    y = node(1, name="y", trainable=True)
+    output = (x * 2 + y * 3) + 1
+    output.backward("test feedback")  # this uses the SumPropagator
+    print(x.feedback)
 
-x = node(1, name="x", trainable=True)
-y = node(1, name="y", trainable=True)
-output = (x * 2 + y * 3) + 1
-output.backward("test feedback")  # this uses the SumPropagator
-print(x.feedback)
+    GRAPH.clear()
 
-GRAPH.clear()
-
-x = node(1, name="x", trainable=True)
-y = node(1, name="y", trainable=True)
-output = (x * 2 + y * 3) + 1
-
-
-output.backward("test feedback", propagator=GraphPropagator())
+    x = node(1, name="x", trainable=True)
+    y = node(1, name="y", trainable=True)
+    output = (x * 2 + y * 3) + 1
 
 
-print("x")
-for k, v in x.feedback.items():
-    v = v[0]
-    print(f"user_feedback: {v.user_feedback}")
-    print("graph")
-    for kk, vv in v.graph:
-        assert isinstance(vv, Node)
-        assert vv is not y
-        print(f"  {kk}: {vv}")
-print()
-print("y")
-for k, v in y.feedback.items():
-    v = v[0]
-    print(f"user_feedback: {v.user_feedback}")
-    print("graph")
-    for kk, vv in v.graph:
-        assert isinstance(vv, Node)
-        assert vv is not x
-        print(f"  {kk}: {vv}")
+    output.backward("test feedback", propagator=GraphPropagator())
+
+
+    print("x")
+    for k, v in x.feedback.items():
+        v = v[0]
+        print(f"user_feedback: {v.user_feedback}")
+        print("graph")
+        for kk, vv in v.graph:
+            assert isinstance(vv, Node)
+            assert vv is not y
+            print(f"  {kk}: {vv}")
+    print()
+    print("y")
+    for k, v in y.feedback.items():
+        v = v[0]
+        print(f"user_feedback: {v.user_feedback}")
+        print("graph")
+        for kk, vv in v.graph:
+            assert isinstance(vv, Node)
+            assert vv is not x
+            print(f"  {kk}: {vv}")
 
 
 @bundle(trainable=True)
@@ -47,42 +47,56 @@ def my_fun(x):
     """Test function"""
     return x**2 + 1
 
+def test_node_feedback():
+    x = node(-1, trainable=False)
+    y = my_fun(x)
 
-x = node(-1, trainable=False)
-y = my_fun(x)
+    y.backward("test feedback", propagator=GraphPropagator())
 
-y.backward("test feedback", propagator=GraphPropagator())
+    print("Node Feedback (my_fun)")
+    for k, v in my_fun.parameter.feedback.items():
+        v = v[0]
+        print(f"user_feedback: {v.user_feedback}")
+        print("graph")
+        for kk, vv in v.graph:
+            assert isinstance(vv, Node)
+            print(f"  {kk}: {vv}")
 
-print("Node Feedback (my_fun)")
-for k, v in my_fun.parameter.feedback.items():
-    v = v[0]
-    print(f"user_feedback: {v.user_feedback}")
-    print("graph")
-    for kk, vv in v.graph:
-        assert isinstance(vv, Node)
-        print(f"  {kk}: {vv}")
+    print("Function Feedback (my_fun)")
+    feedback = my_fun.parameter.feedback
+    assert isinstance(feedback, dict) and feedback, "No feedback on parameter"
 
-print("Function Feedback (my_fun)")
-feedback = my_fun.parameter.feedback
-for k, v in feedback.items():
-    f_feedback = node_to_function_feedback(v[0])
-    print("Graph:")
-    for kk, vv in f_feedback.graph:
-        print(f"  {kk}: {vv}")
-    print("Roots:")
-    for kk, vv in f_feedback.roots.items():
-        print(f"  {kk}: {vv}")
-    print("Others:")
-    for kk, vv in f_feedback.others.items():
-        print(f"  {kk}: {vv}")
-    print("Documentation:")
-    for kk, vv in f_feedback.documentation.items():
-        print(f"  {kk}: {vv}")
-    print("Output:")
-    for kk, vv in f_feedback.output.items():
-        print(f"  {kk}: {vv}")
-    print("User Feedback:")
-    print(f"  {f_feedback.user_feedback}")
+    # convert to function-feedback and verify structure
+    ffb_list = next(iter(feedback.values()))
+    ffb = node_to_function_feedback(ffb_list[0])
+    # must have all four sections non-empty
+    assert ffb.graph,       "Empty graph"
+    assert ffb.roots,       "Empty roots"
+    #assert ffb.others,      "Empty others"
+    assert ffb.documentation, "Empty documentation"
+    assert ffb.output,      "Empty output"
+    assert ffb.user_feedback == "test feedback"
+
+    for k, v in feedback.items():
+        f_feedback = node_to_function_feedback(v[0])
+        print("Graph:")
+        for kk, vv in f_feedback.graph:
+            print(f"  {kk}: {vv}")
+        print("Roots:")
+        for kk, vv in f_feedback.roots.items():
+            print(f"  {kk}: {vv}")
+        print("Others:")
+        for kk, vv in f_feedback.others.items():
+            print(f"  {kk}: {vv}")
+        print("Documentation:")
+        for kk, vv in f_feedback.documentation.items():
+            print(f"  {kk}: {vv}")
+        print("Output:")
+        for kk, vv in f_feedback.output.items():
+            print(f"  {kk}: {vv}")
+        print("User Feedback:")
+        print(f"  {f_feedback.user_feedback}")
+
 
 
 # def sum_of_integers():

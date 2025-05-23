@@ -508,15 +508,20 @@ class TextGrad(Optimizer):
             {"role": "user", "content": user_prompt},
         ]
 
-        try:
-            response = self.llm.create(
-                messages=messages,
-                max_tokens=self.max_tokens,
-            )
-        except Exception:
-            response = self.llm.create(messages=messages, max_tokens=self.max_tokens)
-        response = response.choices[0].message.content
+        if hasattr(self.llm, "create"):
+            try:
+                response = self.llm.create(
+                    messages=messages,
+                    max_tokens=self.max_tokens,
+                )
+            except Exception:
+                response = self.llm.create(messages=messages, max_tokens=self.max_tokens)
+            response = response.choices[0].message.content
+        else:
+            response = self.llm( messages, max_tokens=self.max_tokens)
+            if isinstance(response, list):
+                response = response[0]
+                if hasattr(response, "message"):
+                    response = response.message.content
 
-        if verbose:
-            print("LLM response:\n", response)
         return response

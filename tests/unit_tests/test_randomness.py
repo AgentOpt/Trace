@@ -1,38 +1,39 @@
 import opto.trace as trace
 import random
 
-seed = 0
-random.seed(seed)
-x = random.random()
-
-
-def test():
+def test_randomness():
+    seed = 0
+    random.seed(seed)
     x = random.random()
-    return x
 
 
-random.seed(seed)
-x1 = test()
-random.seed(seed)
-x2 = test()
-assert x1 == x2
+    def test():
+        x = random.random()
+        return x
 
 
-obj = 1
-print("outside obj id", id(obj))
+    random.seed(seed)
+    x1 = test()
+    random.seed(seed)
+    x2 = test()
+    assert x1 == x2
 
 
-@trace.bundle(trainable=True)
-def test():
-    return 1
-    # x = random.random()
-    # x = obj + x
-    # print("inside obj id", id(obj))
-    # return x
+    obj = 1
+    print("outside obj id", id(obj))
 
 
-random.seed(seed)
-x1 = test()
-random.seed(seed)
-x2 = test()
-assert x1 == x2
+    @trace.bundle(trainable=True)
+    def test():
+        return 1
+        # x = random.random()
+        # x = obj + x
+        # print("inside obj id", id(obj))
+        # return x
+
+
+    random.seed(seed)
+    x1 = test()
+    random.seed(seed)
+    x2 = test()
+    assert x1 == x2

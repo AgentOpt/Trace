@@ -17,39 +17,42 @@ class Container(NodeContainer):
         self.sub_x = SubContainer(x)
 
 
-foo = Container("foo", 1)
-bar = Container("bar", 2)
+def test_apply_add_broadcasts():
+    # foobar = copy.deepcopy(foo)
+    foo = Container("foo", 1)
+    bar = Container("bar", 2)
+    foobar = Container("not_foobar", 3)
+    foobar2 = apply_op(ops.add, foobar, foo, bar)
 
-# foobar = copy.deepcopy(foo)
-foobar = Container("not_foobar", 3)
-foobar2 = apply_op(ops.add, foobar, foo, bar)
+    assert foobar == foobar2  # no copy is created in the process
+    assert foobar.x.data == "foobar"
+    assert foo.x in foobar.x.parents and bar.x in foobar.x.parents
+    assert foobar.list_x[0].data == "foo1bar1"
+    assert foobar.list_x[1].data == "foo2bar2"
+    assert foobar.dict_x["v"] == 3
+    assert foobar.dict_x["x"][0].data == "foo1bar1"
+    assert foobar.dict_x["x"][1].data == "foo2bar2"
+    assert foobar.sub_x.y.data == "foobar"
 
-assert foobar == foobar2  # no copy is created in the process
-assert foobar.x.data == "foobar"
-assert foo.x in foobar.x.parents and bar.x in foobar.x.parents
-assert foobar.list_x[0].data == "foo1bar1"
-assert foobar.list_x[1].data == "foo2bar2"
-assert foobar.dict_x["v"] == 3
-assert foobar.dict_x["x"][0].data == "foo1bar1"
-assert foobar.dict_x["x"][1].data == "foo2bar2"
-assert foobar.sub_x.y.data == "foobar"
+def test_apply_op_with_list_and_dict():
+    # Test list and dict
+    foo = Container("foo", 1)
+    bar = Container("bar", 2)
+    foobar = Container("not_foobar", 3)
+    foobar = apply_op(lambda *args: list(args), foobar, foo, bar)
+    assert foobar.x[0].data == "foo"
+    assert foobar.x[1].data == "bar"
+    assert foobar.dict_x["v"] == 3
+    assert foobar.dict_x["x"][0][0].data == "foo1"
+    assert foobar.dict_x["x"][0][1].data == "bar1"
+    assert foobar.dict_x["x"][1][0].data == "foo2"
+    assert foobar.dict_x["x"][1][1].data == "bar2"
 
-
-# Test list and dict
-foobar = apply_op(lambda *args: list(args), foobar, foo, bar)
-assert foobar.x[0].data == "foo"
-assert foobar.x[1].data == "bar"
-assert foobar.dict_x["v"] == 3
-assert foobar.dict_x["x"][0][0].data == "foo1"
-assert foobar.dict_x["x"][0][1].data == "bar1"
-assert foobar.dict_x["x"][1][0].data == "foo2"
-assert foobar.dict_x["x"][1][1].data == "bar2"
-
-foobar = apply_op(dict, foobar, foo=foo, bar=bar)
-assert foobar.x["foo"].data == "foo"
-assert foobar.x["bar"].data == "bar"
-assert foobar.dict_x["v"] == 3
-assert foobar.dict_x["x"][0]["foo"].data == "foo1"
-assert foobar.dict_x["x"][0]["bar"].data == "bar1"
-assert foobar.dict_x["x"][1]["foo"].data == "foo2"
-assert foobar.dict_x["x"][1]["bar"].data == "bar2"
+    foobar = apply_op(dict, foobar, foo=foo, bar=bar)
+    assert foobar.x["foo"].data == "foo"
+    assert foobar.x["bar"].data == "bar"
+    assert foobar.dict_x["v"] == 3
+    assert foobar.dict_x["x"][0]["foo"].data == "foo1"
+    assert foobar.dict_x["x"][0]["bar"].data == "bar1"
+    assert foobar.dict_x["x"][1]["foo"].data == "foo2"
+    assert foobar.dict_x["x"][1]["bar"].data == "bar2"

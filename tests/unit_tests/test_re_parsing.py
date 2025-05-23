@@ -1,18 +1,17 @@
 import re
+import pytest
 
-
-def test(l):
-    assert ('@bundle(' in l) or ('@bundle\\' in l) or \
-            (re.search(r'@.*\.bundle\(.*', l) is not None) or \
-            (re.search(r'@.*\.bundle\\.*', l) is not None)
-
-l = '@bundle()\njklasjdflksd'
-test(l)
-
-l = '@bundle\ ajsdkfldsjf'
-test(l)
-
-l = '@.....bundle(jkalsdfj'
-test(l)
-l = '@.....bundle\\jklasjdlfk'
-test(l)
+@ pytest.mark.parametrize("l", [
+    '@bundle()\njklasjdflksd',
+    '@bundle\\ ajsdkfldsjf',
+    '@.....bundle(jkalsdfj',
+    '@.....bundle\\jklasjdlfk',
+])
+def test_bundle_decorator_patterns(l):
+    # Matches literal @bundle( or @bundle\\  or any @... .bundle(... or @... .bundle\\...
+    assert (
+        '@bundle(' in l
+        or '@bundle\\' in l
+        or re.search(r'@.*\.bundle\(.*', l) is not None
+        or re.search(r'@.*\.bundle\\.*', l) is not None
+    )
