@@ -1,8 +1,11 @@
 import os
 import pickle
 import copy
-from opto.trace.containers import ParameterContainer
+import inspect
+import textwrap
+from opto.trace.containers import ParameterContainer, trainable_method
 from opto.trace.nodes import ParameterNode
+from opto.trace.projections import Projection, BlackCodeFormatter
 
 
 def model(cls):
@@ -11,7 +14,61 @@ def model(cls):
     """
 
     class ModelWrapper(cls, Module):
-        pass
+        def model_dump(self, filename, projection: Projection = BlackCodeFormatter()):
+            """Dump the model's source code to a file, including all methods and attributes.
+            Ignores dunder methods unless they were overridden by the user.
+            """
+            trace_model_body = f"class {cls.__name__}:\n"
+            
+            # Get all members of the class
+            all_members = inspect.getmembers(self)
+            cls_members = inspect.getmembers(cls)
+            cls_member_names = [m[0] for m in cls_members]
+
+            # Filter out dunder methods unless they were overridden
+            filtered_members = []
+            for name, member in all_members:
+                # Skip internal trace reserved members
+                if name.startswith('__TRACE_RESERVED_'):
+                    continue
+
+                if name not in cls_member_names:
+                    continue
+                    
+                # Include if it's not a dunder method or if it was overridden
+                if not name.startswith('__'):
+                    filtered_members.append((name, member))
+                elif name.startswith('__'):
+                    # For dunder methods, check if they were overridden
+                    try:
+                        if hasattr(member, '__qualname__') and member.__qualname__.split('.')[0] == cls.__name__:
+                            filtered_members.append((name, member))
+                    except (AttributeError, TypeError):
+                        # Skip if we can't determine if it was overridden
+                        continue
+
+            # Process each member
+            for i, (name, member) in enumerate(filtered_members):
+                if 'FunModule' in str(member):
+                    # Handle methods
+                    source = member.parameter.data
+                    source = textwrap.dedent(source)
+                    indented = textwrap.indent(source, "    ")
+                    trace_model_body += indented
+                else:  # this is a class method
+                    source = inspect.getsource(member)
+                    source = textwrap.dedent(source)
+                    indented = textwrap.indent(source, "    ")
+                    trace_model_body += indented
+                
+                if i < len(all_members) - 1:
+                    trace_model_body += "\n"  # only one newline between members
+
+            if projection is not None:
+                trace_model_body = projection.project(trace_model_body)
+
+            with open(filename, "w") as f:
+                f.write(trace_model_body)
 
     return ModelWrapper
 
@@ -25,8 +82,8 @@ class Module(ParameterContainer):
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
-    def save(self, file_name):
-        """Save the parameters of the model to a file."""
+    def save(self, file_name: str):
+        """Save the parameters of the model to a pickle file."""
         # detect if the directory exists
         directory = os.path.dirname(file_name)
         if directory != "":
@@ -35,7 +92,7 @@ class Module(ParameterContainer):
             pickle.dump(copy.deepcopy(self.parameters_dict()), f)
 
     def load(self, file_name):
-        """Load the parameters of the model from a file."""
+        """Load the parameters of the model from a pickle file."""
         with open(file_name, "rb") as f:
             loaded_data = pickle.load(f)
         self._set(loaded_data)
