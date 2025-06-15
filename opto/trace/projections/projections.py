@@ -1,4 +1,4 @@
-from opto.trace.nodes import ParameterNode
+from typing import Any
 
 
 class Projection:
@@ -9,7 +9,7 @@ class Projection:
     def __init__(self, *args, **kwargs):
         pass
 
-    def __call__(self, x: ParameterNode) -> ParameterNode:
+    def __call__(self, x: Any) -> Any:
         """
         Call the projection method on the parameter node `x`.
 
@@ -21,7 +21,7 @@ class Projection:
         """
         return self.project(x)
 
-    def project(self, x: ParameterNode) -> ParameterNode:
+    def project(self, x: Any) -> Any:
         """
         Project the parameter node `x` onto the feasible set.
         """

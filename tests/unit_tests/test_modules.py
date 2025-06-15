@@ -156,3 +156,185 @@ def test_multiple_inheritance():
     result = child.forward(1)
     assert result._data == 2
 
+
+# Test cases for model_dump
+@model
+class DummyClass:
+    def __init__(self):
+        super().__init__()
+        self._param = node(1, trainable=True)
+        self.regular_attr = "test"
+
+    @bundle(trainable=True)
+    def regular_method(self, x):
+        return x
+
+    def __str__(self):
+        return "DummyClass"
+
+    def __custom__(self):
+        return "custom"
+
+@model
+class ComplexClass:
+    def __init__(self):
+        super().__init__()
+        self._param = node(1, trainable=True)
+        self._nested = DummyClass()
+
+    @bundle(trainable=True)
+    def complex_method(self, x):
+        return self._nested.regular_method(x)
+
+    def __str__(self):
+        return "ComplexClass"
+
+def test_model_dump_basic():
+    dummy = DummyClass()
+    dummy._param._data = 42  # Change the node value
+    temp_file = "temp_dummy.py"
+    try:
+        dummy.model_dump(temp_file)
+        with open(temp_file, "r") as f:
+            content = f.read()
+            # Check if class definition is present
+            assert "class DummyClass:" in content
+            # Check if regular method is present
+            assert "def regular_method" in content
+            # Check if __str__ is present (overridden dunder)
+            assert "def __str__" in content
+            # Check if __custom__ is present (custom dunder)
+            assert "def __custom__" in content
+            # Check if regular attribute is present
+            assert "regular_attr" in content
+            # Check if node initialization was replaced with current value
+            assert "self._param = 42" in content
+            assert "self._param = node(1" not in content
+    finally:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+def test_model_dump_complex():
+    complex_obj = ComplexClass()
+    temp_file = "temp_complex.py"
+    try:
+        complex_obj.model_dump(temp_file)
+        with open(temp_file, "r") as f:
+            content = f.read()
+            # Check if class definition is present
+            assert "class ComplexClass:" in content
+            # Check if complex method is present
+            assert "def complex_method" in content
+            # Check if __str__ is present
+            assert "def __str__" in content
+            # Check if nested class reference is in the method
+            assert "self._nested.regular_method" in content
+    finally:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+def test_model_dump_with_projection():
+    dummy = DummyClass()
+    temp_file = "temp_dummy_formatted.py"
+    try:
+        # Test with BlackCodeFormatter
+        from opto.trace.projections import BlackCodeFormatter
+        dummy.model_dump(temp_file, projection=BlackCodeFormatter())
+        with open(temp_file, "r") as f:
+            content = f.read()
+            # Check if content is properly formatted
+            assert "class DummyClass:" in content
+            assert "def regular_method" in content
+    finally:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+@model
+class NonTrainableClass:
+    def __init__(self):
+        super().__init__()
+        self._param = node(1, trainable=False)
+        self._param2 = node(2, trainable=False)
+        self.regular_attr = "test"
+
+    @bundle(trainable=False)
+    def non_trainable_method(self, x):
+        return x
+
+    @bundle(trainable=False)
+    def another_non_trainable(self, y):
+        return y + 1
+
+def test_model_dump_non_trainable():
+    obj = NonTrainableClass()
+    obj._param._data = 10  # Change node value
+    obj._param2._data = 20  # Change another node value
+    temp_file = "temp_non_trainable.py"
+    try:
+        obj.model_dump(temp_file)
+        with open(temp_file, "r") as f:
+            content = f.read()
+            # Check if class definition is present
+            assert "class NonTrainableClass:" in content
+            # Check if node initializations were replaced with current values
+            assert "self._param = 10" in content
+            assert "self._param2 = 20" in content
+            # Verify no node() calls remain
+            assert "node(" not in content
+            # Verify no bundle decorators remain
+            assert "@bundle" not in content
+            # Check if methods are present but without decorators
+            assert "def non_trainable_method" in content
+            assert "def another_non_trainable" in content
+            # Check if regular attribute is present
+            assert "regular_attr" in content
+    finally:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+def test_model_dump_mixed_trainable():
+
+    @model
+    class MixedClass:
+        def __init__(self):
+            super().__init__()
+            self._trainable = node(1, trainable=True)
+            self._non_trainable = node(2, trainable=False)
+            self.regular_attr = "test"
+
+        @bundle(trainable=True)
+        def trainable_method(self, x):
+            return x
+
+        @bundle(trainable=False)
+        def non_trainable_method(self, y):
+            return y + 1
+
+
+    obj = MixedClass()
+    obj._trainable._data = 100
+    obj._non_trainable._data = 200
+
+    temp_file = "temp_mixed.py"
+    try:
+        obj.model_dump(temp_file)
+        with open(temp_file, "r") as f:
+            content = f.read()
+            # Check if class definition is present
+            assert "class MixedClass:" in content
+            # Check if all node initializations were replaced
+            assert "self._trainable = 100" in content
+            assert "self._non_trainable = 200" in content
+            # Verify no node() calls remain
+            assert "node(" not in content
+            # Verify no bundle decorators remain
+            assert "@bundle" not in content
+            # Check if methods are present but without decorators
+            assert "def trainable_method" in content
+            assert "def non_trainable_method" in content
+            # Check if regular attribute is present
+            assert "regular_attr" in content
+    finally:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
