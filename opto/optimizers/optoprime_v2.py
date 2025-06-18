@@ -1,7 +1,16 @@
 import json
+from typing import Any, List, Dict, Union, Tuple
 from textwrap import dedent, indent
-from opto.optimizers.optoprime import OptoPrime
+from dataclasses import dataclass, asdict
+from opto.optimizers.optoprime import OptoPrime, ProblemInstance
 
+from opto.trace.nodes import ParameterNode, Node, MessageNode
+from opto.trace.propagators import TraceGraph, GraphPropagator
+from opto.trace.propagators.propagators import Propagator
+
+from opto.utils.llm import AbstractModel, LLM
+from opto.optimizers.buffers import FIFOBuffer
+import copy
 
 class OptoPrimeV2(OptoPrime):
     # This is generic representation prompt, which just explains how to read the problem.
@@ -22,7 +31,9 @@ class OptoPrimeV2(OptoPrime):
 
         In #Variables, #Inputs, #Outputs, and #Others, the format is:
 
-        <data_type> <variable_name> = <value>
+        <NODE>
+        (<data_type>) <variable_name> = <value>
+        </NODE>
 
         If <type> is (code), it means <value> is the source code of a python code, which may include docstring and definitions.
         """
@@ -33,11 +44,12 @@ class OptoPrimeV2(OptoPrime):
 
     output_format_prompt = dedent(
         """
-        Output_format: Your output should be in the following json format, satisfying the json syntax:
-
-        {{
-        "reasoning": <Your reasoning>,
-        "answer": <Your answer>,
+        Output_format: Your output should be in the following XML/HTML format:
+        
+        <Thinking>
+        Your reasoning
+        </Thinking>
+        
         "suggestion": {{
             <variable_1>: <suggested_value_1>,
             <variable_2>: <suggested_value_2>,
@@ -110,6 +122,76 @@ class OptoPrimeV2(OptoPrime):
         "code": "#Code",
         "documentation": "#Documentation",
     }
+
+    def __init__(
+        self,
+        parameters: List[ParameterNode],
+        llm: AbstractModel = None,
+        *args,
+        propagator: Propagator = None,
+        objective: Union[None, str] = None,
+        ignore_extraction_error: bool = True,  # ignore the type conversion error when extracting updated values from LLM's suggestion
+        include_example=False,  # TODO # include example problem and response in the prompt
+        memory_size=0,  # Memory size to store the past feedback
+        max_tokens=4096,
+        log=True,
+        prompt_symbols=None,
+        **kwargs,
+    ):
+        super().__init__(parameters, *args, propagator=propagator, **kwargs)
+        self.ignore_extraction_error = ignore_extraction_error
+        self.llm = llm or LLM()
+        self.objective = objective or self.default_objective
+        self.example_problem = ProblemInstance.problem_template.format(
+            instruction=self.default_objective,
+            code="y = add(x=a,y=b)\nz = subtract(x=y, y=c)",
+            documentation="add: add x and y \nsubtract: subtract y from x",
+            variables="(int) a = 5",
+            constraints="a: a > 0",
+            outputs="(int) z = 1",
+            others="(int) y = 6",
+            inputs="(int) b = 1\n(int) c = 5",
+            feedback="The result of the code is not as expected. The result should be 10, but the code returns 1",
+            stepsize=1,
+        )
+        self.example_response = dedent(
+            """
+            {"reasoning": 'In this case, the desired response would be to change the value of input a to 14, as that would make the code return 10.',
+             "suggestion": {"a": 10}
+            }
+            """
+        )
+
+        self.include_example = include_example
+        self.max_tokens = max_tokens
+        self.log = [] if log else None
+        self.summary_log = [] if log else None
+        self.memory = FIFOBuffer(memory_size)
+        self.prompt_symbols = copy.deepcopy(self.default_prompt_symbols)
+        if prompt_symbols is not None:
+            self.prompt_symbols.update(prompt_symbols)
+
+    @staticmethod
+    def repr_node_value(node_dict):
+        temp_list = []
+        for k, v in node_dict.items():
+            if "__code" not in k:
+                temp_list.append(f"<NODE>\n({type(v[0]).__name__}) {k}={v[0]}\n</NODE>")
+            else:
+                temp_list.append(f"<NODE>\n(code) {k}:{v[0]}\n</NODE>")
+        return "\n".join(temp_list)
+
+    @staticmethod
+    def repr_node_constraint(node_dict):
+        temp_list = []
+        for k, v in node_dict.items():
+            if "__code" not in k:
+                if v[1] is not None:
+                    temp_list.append(f"<CONSTRAINT>\n({type(v[0]).__name__}) {k}: {v[1]}\n</CONSTRAINT>")
+            else:
+                if v[1] is not None:
+                    temp_list.append(f"<CONSTRAINT>\n(code) {k}: {v[1]}\n</CONSTRAINT>")
+        return "\n".join(temp_list)
 
     def construct_prompt(self, summary, mask=None, *args, **kwargs):
         """Construct the system and user prompt."""
