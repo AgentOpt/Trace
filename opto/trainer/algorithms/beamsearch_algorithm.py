@@ -67,7 +67,7 @@ class BeamsearchAlgorithm(MinibatchAlgorithm):
         print_color(f"Using validation_dataset_size={validation_dataset_size} for intermediate evaluations", 'blue')
         
         # Store original parameters to restore after each exploration
-        original_params = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters()}
+        original_params = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters}
         
         # Dictionary to track metrics during beam search
         metrics = {
@@ -91,6 +91,9 @@ class BeamsearchAlgorithm(MinibatchAlgorithm):
             )
             initial_test_score = np.mean(initial_test_scores) if all([s is not None for s in initial_test_scores]) else -np.inf
             print_color(f"Initial test score: {initial_test_score:.4f}", 'yellow')
+            
+            # Log initial test score
+            self.logger.log('Initial test score', initial_test_score, 0, color='blue')
             
             # Add initial score to metrics for logging
             metrics['test_scores'].append(initial_test_score)
@@ -159,6 +162,13 @@ class BeamsearchAlgorithm(MinibatchAlgorithm):
                 
                 print_color(f"Depth {depth+1} - Best validation score: {best_score:.4f}", 'green')
                 
+                # Log validation metrics
+                step_num = depth + 1
+                self.logger.log('Best validation score', best_score, step_num, color='green')
+                self.logger.log('Average validation score', np.mean(scores), step_num, color='cyan')
+                self.logger.log('Min validation score', min(scores), step_num, color='yellow')
+                self.logger.log('Max validation score', max(scores), step_num, color='magenta')
+                
                 # Evaluate on test set every test_frequency steps
                 if test_dataset is not None and ((depth + 1) % test_frequency == 0):
                     # Update agent with best parameters from this depth
@@ -192,6 +202,9 @@ class BeamsearchAlgorithm(MinibatchAlgorithm):
                     metrics['test_depths'].append(depth + 1)
                     
                     print_color(f"Depth {depth+1} - Test score: {test_score:.4f}", 'magenta')
+                    
+                    # Log test score
+                    self.logger.log('Periodic test score', test_score, step_num, color='magenta')
         
         # Final selection - choose the best beam using FULL validation set
         print_color("\n===== Final Selection Using Full Validation Set =====", 'blue')
@@ -216,6 +229,10 @@ class BeamsearchAlgorithm(MinibatchAlgorithm):
         # Get the best parameters
         best_params = best_beams[0]
         final_validation_score = final_val_scores[0] if final_val_scores else -np.inf
+        
+        # Log final validation score
+        final_step = max_depth + 1
+        self.logger.log('Final validation score', final_validation_score, final_step, color='blue')
         
         # Apply the best parameters
         self.optimizer.update(best_params)
@@ -259,6 +276,9 @@ class BeamsearchAlgorithm(MinibatchAlgorithm):
         if final_test_score is not None:
             print_color(f"BEST BEAM - Test score: {final_test_score:.4f}", 'green')
             
+            # Log final test score
+            self.logger.log('Final test score', final_test_score, final_step, color='green')
+        
         # Save the best model
         if save_frequency is not None and save_frequency > 0:
             self.save_agent(save_path, 0)
@@ -384,7 +404,7 @@ class BeamsearchAlgorithm(MinibatchAlgorithm):
             If return_scores is True: Tuple of (list of parameters, list of scores)
         """
         # Store current parameters to restore later
-        current_params = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters()}
+        current_params = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters}
         
         # List to store (score, params) pairs
         scored_candidates = []
@@ -495,7 +515,7 @@ class BeamsearchHistoryAlgorithm(BeamsearchAlgorithm):
         print_color(f"Using validation_dataset_size={validation_dataset_size} for intermediate evaluations", 'blue')
 
         # Store original parameters
-        original_params = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters()}
+        original_params = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters}
 
         # Dictionary to track metrics
         metrics = {
@@ -517,6 +537,10 @@ class BeamsearchHistoryAlgorithm(BeamsearchAlgorithm):
             )
             initial_test_score = np.mean(initial_test_scores) if all([s is not None for s in initial_test_scores]) else -np.inf
             print_color(f"Initial test score: {initial_test_score:.4f}", 'yellow')
+            
+            # Log initial test score
+            self.logger.log('Initial test score', initial_test_score, 0, color='blue')
+            
             metrics['test_scores'].append(initial_test_score)
             metrics['test_depths'].append(1) # Start depth at 1 for consistency
 
@@ -574,6 +598,14 @@ class BeamsearchHistoryAlgorithm(BeamsearchAlgorithm):
                     metrics['depth_scores'].append(scores)
                     print_color(f"Depth {depth+1} - Best validation score: {best_score_this_depth:.4f}", 'green')
                 
+                    # Log validation metrics
+                    step_num = depth + 1
+                    self.logger.log('Best validation score', best_score_this_depth, step_num, color='green')
+                    self.logger.log('Average validation score', np.mean(scores), step_num, color='cyan')
+                    self.logger.log('Min validation score', min(scores), step_num, color='yellow')
+                    self.logger.log('Max validation score', max(scores), step_num, color='magenta')
+                    self.logger.log('History buffer size', len(self.parameter_history), step_num, color='orange')
+                
                     best_idx = scores.index(best_score_this_depth) # Find index of best score
                     best_params = beams[best_idx] # Get corresponding params
 
@@ -609,6 +641,9 @@ class BeamsearchHistoryAlgorithm(BeamsearchAlgorithm):
                         metrics['test_scores'].append(test_score)
                         metrics['test_depths'].append(depth + 1)
                         print_color(f"Depth {depth+1} - Test score: {test_score:.4f}", 'magenta')
+                        
+                        # Log test score
+                        self.logger.log('Periodic test score', test_score, step_num, color='magenta')
 
         # >>> End Main Loop <<<
 
@@ -624,7 +659,11 @@ class BeamsearchHistoryAlgorithm(BeamsearchAlgorithm):
         final_validation_score = final_val_scores[0] if final_val_scores else -np.inf
         best_params = best_beams[0] if best_beams else original_params # Fallback to original if empty
 
-        # Apply best parameters
+        # Log final validation score
+        final_step = max_depth + 1
+        self.logger.log('Final validation score', final_validation_score, final_step, color='blue')
+        
+        # Apply the best parameters
         self.optimizer.update(best_params)
 
         # Print final parameters
@@ -640,6 +679,9 @@ class BeamsearchHistoryAlgorithm(BeamsearchAlgorithm):
             )
             final_test_score = np.mean(final_test_scores_eval) if all([s is not None for s in final_test_scores_eval]) else -np.inf
             print_color(f"BEST BEAM - Test score: {final_test_score:.4f}", 'green')
+
+            # Log final test score
+            self.logger.log('Final test score', final_test_score, final_step, color='green')
 
         # Save agent if configured
         if kwargs.get('save_frequency', None) is not None and kwargs['save_frequency'] > 0:

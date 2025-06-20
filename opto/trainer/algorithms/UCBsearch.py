@@ -79,7 +79,7 @@ class UCBSearchAlgorithm(MinibatchAlgorithm):
             print_color("Evaluation dataset is empty or invalid. Returning score -inf, count 0.", color='yellow')
             return -np.inf, 0
 
-        original_params = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters()}
+        original_params = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters}
         self.optimizer.update(params_to_eval_dict)      
 
         eval_xs, eval_infos = self._sample_minibatch(dataset, evaluation_batch_size) # Use evaluation_batch_size
@@ -172,12 +172,16 @@ class UCBSearchAlgorithm(MinibatchAlgorithm):
 
 # 0. Evaluate the initial parameter on samples of the validation set and add it to the buffer.
         print_color("Evaluating initial parameters using validation_dataset samples...", 'cyan')
-        initial_params_dict = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters()}
+        initial_params_dict = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters}
         initial_score, initial_evals = self._evaluate_candidate(
             initial_params_dict, validation_dataset, guide, evaluation_batch_size, num_threads # Use validation_dataset and guide
         )
         self._total_evaluations_tracker += initial_evals 
         total_samples += initial_evals
+
+        # Log initial evaluation
+        self.logger.log('Initial UCB score', initial_score, 0, color='blue')
+        self.logger.log('Initial evaluations', initial_evals, 0, color='cyan')
 
         initial_candidate_entry = {
             'params': initial_params_dict,
@@ -200,6 +204,9 @@ class UCBSearchAlgorithm(MinibatchAlgorithm):
             self._update_buffer_ucb_scores() # Ensure UCB scores are fresh
             action_candidate_a = self.select(self.buffer)
             
+            # Log selected action UCB score
+            self.logger.log('Selected action UCB', action_candidate_a['ucb_score'], iteration, color='magenta')
+            self.logger.log('Selected action mean score', action_candidate_a['score_sum']/(action_candidate_a['eval_count'] or 1), iteration, color='cyan')
             
             print_color(f"Iter {iteration}/{num_search_iterations}: ", 'blue')
             
@@ -246,7 +253,7 @@ class UCBSearchAlgorithm(MinibatchAlgorithm):
                 if not isinstance(a_prime_params_dict, dict) or not a_prime_params_dict:
                     print_color(f"Iter {iteration}: Optimizer.step did not return a valid param dict for a_prime. Using current agent params as a_prime.", 'yellow')
                     # Fallback: if step modified agent in-place and didn't return dict, current agent state is a_prime
-                    a_prime_params_dict = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters()}
+                    a_prime_params_dict = {p: copy.deepcopy(p.data) for p in self.optimizer.parameters}
 
             except Exception as e:
                 print_color(f"Iter {iteration}: Error during optimizer.step for a_prime: {e}. Skipping candidate generation.", 'red')
@@ -259,6 +266,11 @@ class UCBSearchAlgorithm(MinibatchAlgorithm):
             self._total_evaluations_tracker += a_prime_evals
             total_samples += evaluation_batch_size + train_batch_size
             metrics['new_candidate_scores'].append(a_prime_score)
+            
+            # Log new candidate performance
+            self.logger.log('New candidate score', a_prime_score, iteration, color='green')
+            self.logger.log('Training batch score', score_for_a_on_train_batch, iteration, color='yellow')
+            
             print_color(f"Iter {iteration}: New candidate a_prime generated. Validation Score: {a_prime_score:.4f}, Evals: {a_prime_evals}", 'cyan')
 
             # 5. Update the stats of 'a' (action_candidate_a) based on the training batch experience
@@ -310,6 +322,15 @@ class UCBSearchAlgorithm(MinibatchAlgorithm):
                     "total_evaluations_tracker": self._total_evaluations_tracker,
                     "total_samples": total_samples # Add new metric
                 }
+                
+                # Log all important metrics
+                self.logger.log('Best candidate score', log_data['best_score'], iteration, color='green')
+                self.logger.log('Buffer size', log_data['buffer_size'], iteration, color='blue')
+                self.logger.log('Buffer average score', log_data['buffer_avg_score'], iteration, color='cyan')
+                self.logger.log('Buffer average evaluations', log_data['buffer_avg_evals'], iteration, color='orange')
+                self.logger.log('Total evaluations tracker', log_data['total_evaluations_tracker'], iteration, color='magenta')
+                self.logger.log('Total samples processed', log_data['total_samples'], iteration, color='yellow')
+                
                 print_color(f"Log @ Iter {iteration}: Best score in buffer: {log_data['best_score']:.4f}, Buffer size: {log_data['buffer_size']}, Total samples: {total_samples}", 'green')
             
             # Save agent (e.g., the one with highest mean score in buffer)
@@ -321,13 +342,26 @@ class UCBSearchAlgorithm(MinibatchAlgorithm):
 
         # End of search loop
         print_color("UCB search finished.", 'blue')
+        
+        # Log final training summary
+        final_iteration = num_search_iterations
+        self.logger.log('UCB search completed', final_iteration, final_iteration, color='blue')
+        self.logger.log('Final total samples', total_samples, final_iteration, color='magenta')
+        
         if not self.buffer:
             print_color("Buffer is empty at the end of search. No best candidate found.", 'red')
+            self.logger.log('Final status', 'Buffer empty - no best candidate', final_iteration, color='red')
             return metrics, -np.inf
             
         # Select the best candidate based on highest mean score (exploitation)
         final_best_candidate = max(self.buffer, key=lambda c: c['score_sum'] / (c['eval_count'] or 1E-9))
         final_best_score = final_best_candidate['score_sum'] / (final_best_candidate['eval_count'] or 1E-9)
+        
+        # Log final results
+        self.logger.log('Final best score', final_best_score, final_iteration, color='green')
+        self.logger.log('Final best candidate evaluations', final_best_candidate['eval_count'], final_iteration, color='cyan')
+        self.logger.log('Final buffer size', len(self.buffer), final_iteration, color='blue')
+        
         print_color(f"Final best candidate: Mean Score {final_best_score:.4f}, Evals {final_best_candidate['eval_count']}", 'green')
 
         # Load best parameters into the agent
