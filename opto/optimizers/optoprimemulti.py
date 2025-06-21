@@ -2,10 +2,9 @@ from typing import Any, List, Dict, Union, Optional
 import json
 from typing import List, Dict
 
-
-
 from opto.trace.propagators import GraphPropagator
 from opto.optimizers.optoprime import OptoPrime
+from opto.utils.llm import LLMFactory
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -19,6 +18,8 @@ class OptoPrimeMulti(OptoPrime):
         generation_technique: str = "temperature_variation",
         selection_technique: str = "best_of_n",
         experts_list: Optional[List[str]] = None,
+        llm_profiles: Optional[List[str]] = None,  # List of LLM profiles to use
+        llm_weights: Optional[List[float]] = None,  # Weights for each LLM (for weighted selection)
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -31,6 +32,44 @@ class OptoPrimeMulti(OptoPrime):
         self.selection_technique = selection_technique
         self.experts_list = experts_list
 
+        # NEW: Multiple LLM support
+        self.llm_profiles = llm_profiles
+        self.llm_weights = llm_weights or [1.0] * len(llm_profiles) if llm_profiles else None
+        self._llm_instances = {}  # Cache for LLM instances
+    
+    def _get_llm_for_profile(self, profile: str = None):
+        """Get LLM instance for a profile, with caching."""
+        if profile is None:
+            return self.llm  # Use default LLM
+            
+        if profile not in self._llm_instances:
+            try:
+                from opto.utils.llm import LLMFactory
+                self._llm_instances[profile] = LLMFactory.get_llm(profile)
+            except Exception as e:
+                # Fallback to default LLM if profile creation fails
+                import warnings
+                warnings.warn(f"Failed to create LLM for profile '{profile}': {e}. Using default LLM.")
+                return self.llm
+
+        return self._llm_instances[profile]
+    
+    def _get_llms_for_generation(self, num_responses: int):
+        """Get list of LLMs to use for generation."""
+        if self.llm_profiles is None or len(self.llm_profiles) == 0:
+            # Fallback to single LLM (existing behavior)
+            return [self.llm] * num_responses
+        
+        # Distribute responses across multiple LLMs
+        llms = []
+        for i in range(num_responses):
+            profile_idx = i % len(self.llm_profiles)
+            profile = self.llm_profiles[profile_idx]
+            llm = self._get_llm_for_profile(profile)
+            llms.append(llm)
+        
+        return llms
+        
     def call_llm(
         self,
         system_prompt: str,
@@ -39,10 +78,14 @@ class OptoPrimeMulti(OptoPrime):
         max_tokens: int = 4096,
         num_responses: int = 1,
         temperature: float = 0.0,
+        llm = None,  # NEW: Optional specific LLM to use
     ) -> List[str]:
-        """Call the LLM with a prompt and return multiple responses."""
+        """Given a prompt, returns multiple candidate answers."""
         # if verbose not in (False, "output"):
         #     print("Prompt\n", system_prompt + user_prompt)
+
+        # Use provided LLM or fall back to default
+        active_llm = llm or self.llm
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -50,9 +93,9 @@ class OptoPrimeMulti(OptoPrime):
         ]
 
         try:
-            if hasattr(self.llm, "create"):
+            if hasattr(active_llm, "create"):
                 # Standard OpenAI/LangChain style
-                response = self.llm.create(
+                response = active_llm.create(
                     messages=messages,
                     response_format={"type": "json_object"},
                     max_tokens=max_tokens,
@@ -62,7 +105,7 @@ class OptoPrimeMulti(OptoPrime):
             else:
                 # Fallback for LiteLLM (callable) or other interfaces
                 # e.g., LiteLLM(messages, max_tokens=…, n=…, temperature=…)
-                response = self.llm(
+                response = active_llm(
                     messages,
                     max_tokens=max_tokens,
                     n=num_responses,
@@ -165,6 +208,35 @@ class OptoPrimeMulti(OptoPrime):
 
         generation_technique = generation_technique.lower()
 
+        if self.llm_profiles is not None and len(self.llm_profiles) > 0 and generation_technique == "multi_llm":
+            llms = self._get_llms_for_generation(num_responses)
+            
+            # Prepare arguments for parallel execution
+            arg_dicts = []
+            for i, llm in enumerate(llms):
+                profile_name = self.llm_profiles[i % len(self.llm_profiles)] if self.llm_profiles else "default"
+                modified_system_prompt = f"{system_prompt}\n\n[Using {profile_name} model for diverse perspective]"
+                
+                arg_dicts.append(dict(
+                    system_prompt=modified_system_prompt,
+                    user_prompt=user_prompt,
+                    verbose=verbose,
+                    max_tokens=max_tokens,
+                    num_responses=1,
+                    temperature=temp_min,
+                    llm=llm  # Use specific LLM
+                ))
+            
+            # Execute in parallel
+            try:
+                parallel_results = self._parallel_call_llm(arg_dicts)
+                candidates.extend(parallel_results)
+            except Exception as e:
+                if verbose:
+                    print(f"Error in multi_llm mode: {e} – falling back to temperature variation")
+                generation_technique = "temperature_variation"
+                candidates = []
+
         if generation_technique == "self_refinement":
             # Generate solutions by refining previous ones
             for i in range(num_responses):
@@ -179,7 +251,7 @@ class OptoPrimeMulti(OptoPrime):
                     verbose=verbose,
                     max_tokens=max_tokens,
                     num_responses=1,
-                    temperature=0.0,
+                    temperature=temp_min,
                 )
                 
                 if response and len(response) > 0:
@@ -195,7 +267,7 @@ class OptoPrimeMulti(OptoPrime):
                         f"CANDIDATE {idx + 1}: <<<\n{cand}\n>>>"
                         for idx, cand in enumerate(candidates)
                     )
-                    meta_prompt = f"{system_prompt}\nGiven the following candidate solutions, propose a new alternative optimal solution to user's prompt using their same JSON format (suggest only trainable codes/variables to modify, never inputs):\n{previous_solutions}\n"
+                    meta_prompt = f"{system_prompt}\nGiven the following prior CANDIDATE solutions, answer with a very different new CANDIDATE optimal solution to user's prompt using their same JSON format (suggest only trainable codes/variables to modify, never inputs):\n{previous_solutions}\n"
                 
                 response = self.call_llm(
                     system_prompt=meta_prompt,
@@ -203,7 +275,7 @@ class OptoPrimeMulti(OptoPrime):
                     verbose=verbose,
                     max_tokens=max_tokens,
                     num_responses=1,
-                    temperature=0.0,
+                    temperature=temp_min,
                 )
                 
                 if response and len(response) > 0:
@@ -292,7 +364,7 @@ class OptoPrimeMulti(OptoPrime):
             print("Warning: Failed to generate any candidates")
             
         if self.log is not None:
-            self.log.append({"system_prompt": system_prompt, "user_prompt": user_prompt, "response": candidates, "generation_technique": generation_technique})
+            self.log.append({"system_prompt": system_prompt, "user_prompt": user_prompt, "response": candidates, "generation_technique": generation_technique, "llm_profiles": self.llm_profiles})
             # only build a problem instance if we actually have one
             pi = self.problem_instance(summary) if summary is not None else {}
             self.summary_log.append({"problem_instance": pi, "summary": summary})
