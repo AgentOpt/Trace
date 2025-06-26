@@ -102,7 +102,7 @@ print(STARTING_SYSTEM_PROMPT)
 # Testing the 0-shot performance of the evaluation engine
 system_prompt = trace.node(STARTING_SYSTEM_PROMPT,
                            trainable=True,
-                           constraint="structured system prompt to a somewhat capable language model that specifies the behavior and strategies for the QA task")
+                           description="structured system prompt to a somewhat capable language model that specifies the behavior and strategies for the QA task")
 
 # model_evaluation = tg.BlackboxLLM(llm_api_eval, system_prompt)
 def model_evaluation(x):
