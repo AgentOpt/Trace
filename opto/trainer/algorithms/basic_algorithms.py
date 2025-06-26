@@ -6,42 +6,8 @@ from opto.trainer.algorithms.algorithm import AlgorithmBase
 from opto.trainer.loader import DataLoader
 from opto.trainer.utils import async_run
 from opto.optimizers.utils import print_color
+from opto.trainer.evaluators import evaluate
 
-
-def evaluate(agent, guide, inputs, infos, min_score=None, num_threads=None, description=None):
-    """ Evaluate the agent on the inputs and return the scores
-
-    Args:
-        agent: The agent to evaluate
-        guide: The guide to use for evaluation
-        inputs: List of inputs to evaluate on
-        infos: List of additional information for each input
-        min_score: Minimum score to return when an exception occurs
-        num_threads: Maximum number of threads to use for parallel evaluation
-        description: Description to display in the progress bar
-    """
-
-    def evaluate_single(i):
-        try:
-            output = agent(inputs[i]).data
-            score = guide.metric(inputs[i], output, infos[i])
-        except:
-            score = min_score
-        return score
-
-    N = len(inputs)
-    assert len(inputs) == len(infos), "Inputs and infos must have the same length"
-    # Use asyncio if num_threads is not None and > 1
-    use_asyncio = num_threads is not None and num_threads > 1
-    if use_asyncio:
-        # Use provided description or generate a default one
-        eval_description = description or f"Evaluating {N} examples"
-        scores = async_run([evaluate_single] * N, [(i,) for i in range(N)],
-                          max_workers=num_threads,
-                          description=eval_description) # list of tuples
-    else:
-        scores = [evaluate_single(i) for i in range(N)]
-    return scores
 
 def standard_optimization_step(agent, x, guide, info, min_score=0):
     """ Forward and compute feedback.
@@ -93,6 +59,7 @@ class Minibatch(AlgorithmBase):
               batch_size: int = 1,  # batch size for updating the agent
               test_dataset = None,  # dataset of (x, info) pairs to evaluate the agent
               eval_frequency: int = 1,  # frequency of evaluation
+              num_eval_samples: int = 1,  # number of samples to use to evaluate each input
               log_frequency: Union[int, None] = None,  # frequency of logging
               save_frequency: Union[int, None] = None,  # frequency of saving the agent
               save_path: str = "checkpoints/agent.pkl",  # path to save the agent
@@ -112,6 +79,7 @@ class Minibatch(AlgorithmBase):
         num_threads = num_threads or self.num_threads  # Use provided num_threads or fall back to self.num_threads
         test_dataset = test_dataset or train_dataset  # default to train_dataset if test_dataset is not provided
         use_asyncio = self._use_asyncio(num_threads)
+        self.num_eval_samples = num_eval_samples  # number of samples to use to evaluate each input
 
         # Evaluate the agent before learning
         if eval_frequency > 0:
@@ -184,7 +152,7 @@ class Minibatch(AlgorithmBase):
         """ Evaluate the agent on the given dataset. """
         num_threads = num_threads or self.num_threads  # Use provided num_threads or fall back to self.num_threads
         test_scores = evaluate(agent, guide, xs, infos, min_score=min_score, num_threads=num_threads,
-                              description=description)
+                              description=description, num_samples=self.num_eval_samples)
         if all([s is not None for s in test_scores]):
             return np.mean(test_scores)
 
