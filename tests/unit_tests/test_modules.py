@@ -239,7 +239,7 @@ def test_model_dump_with_projection():
     try:
         # Test with BlackCodeFormatter
         from opto.trace.projections import BlackCodeFormatter
-        dummy.model_dump(temp_file, projection=BlackCodeFormatter())
+        dummy.model_dump(temp_file, projections=[BlackCodeFormatter()])
         with open(temp_file, "r") as f:
             content = f.read()
             # Check if content is properly formatted
