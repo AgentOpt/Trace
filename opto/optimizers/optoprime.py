@@ -42,7 +42,7 @@ def node_to_function_feedback(node_feedback: TraceGraph):
         visited.add(node)
 
         if node.is_root:  # Need an or condition here
-            roots.update({node.py_name: (node.data, node._constraint)})
+            roots.update({node.py_name: (node.data, node.description)})
         else:
             # Some might be root (i.e. blanket nodes) and some might be intermediate nodes
             # Blanket nodes belong to roots
@@ -52,12 +52,12 @@ def node_to_function_feedback(node_feedback: TraceGraph):
                 documentation.update({get_fun_name(node): node.description})
                 graph.append((level, repr_function_call(node)))
                 if level == depth:
-                    output.update({node.py_name: (node.data, node._constraint)})
+                    output.update({node.py_name: (node.data, node.description)})
                 else:
-                    others.update({node.py_name: (node.data, node._constraint)})
+                    others.update({node.py_name: (node.data, node.description)})
             else:
                 # this is a blanket node (classified into roots)
-                roots.update({node.py_name: (node.data, node._constraint)})
+                roots.update({node.py_name: (node.data, node.description)})
 
     return FunctionFeedback(
         graph=graph,
@@ -361,7 +361,7 @@ class OptoPrime(Optimizer):
                 else ""
             ),
             documentation=(
-                "\n".join([v for v in summary.documentation.values()])
+                "\n".join([f"[{k}] {v}" for k, v in summary.documentation.items()])
                 if "#Documentation" not in mask
                 else ""
             ),

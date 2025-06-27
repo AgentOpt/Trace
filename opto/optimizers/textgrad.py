@@ -281,6 +281,7 @@ def rm_node_attrs(text: str) -> str:
     Returns:
         String with trace node attributes removed
     """
+    text = "" if text is None else text
     return re.sub(r"\[.*?\]", "", text).strip()
 
 
@@ -413,7 +414,7 @@ class TextGrad(Optimizer):
             "variable_value": node.data,
             "variable_grad": self._get_gradient_and_context_text(gradients),
             "variable_short": get_short_value(node.data),
-            "constraint_text": node._constraint,
+            "constraint_text": rm_node_attrs(node.description),
             "new_variable_start_tag": self.new_variable_tags[0],
             "new_variable_end_tag": self.new_variable_tags[1],
             # "in_context_examples": "\n".join(self.in_context_examples),

@@ -8,7 +8,7 @@ import heapq
 import contextvars
 
 
-def node(data, name=None, trainable=False, description=None, constraint=None):
+def node(data, name=None, trainable=False, description=None):
     """Create a Node object from data.
 
     Args:
@@ -16,7 +16,6 @@ def node(data, name=None, trainable=False, description=None, constraint=None):
         name (str, optional): The name of the Node.
         trainable (bool, optional): Whether the Node is trainable. Defaults to False.
         description (str, optional): A string describing the data.
-        constraint (str, optional): A string describing any constraint that the data should obey.
 
     Returns:
         Node: A Node object containing the data.
@@ -24,11 +23,11 @@ def node(data, name=None, trainable=False, description=None, constraint=None):
     Notes:
         If trainable=True:
             - If data is already a Node, extracts underlying data and updates name
-            - Creates ParameterNode with extracted data, name, trainable=True and constraint
+            - Creates ParameterNode with extracted data, name, trainable=True 
 
         If trainable=False:
             - If data is already a Node, returns it (with warning if name provided)
-            - Otherwise creates new Node with data, name and constraint
+            - Otherwise creates new Node with data, name 
     """
     assert type(description) is str or description is None
 
@@ -42,7 +41,6 @@ def node(data, name=None, trainable=False, description=None, constraint=None):
             name=name,
             trainable=True,
             description=description,
-            constraint=constraint,
         )
     else:
         if isinstance(data, Node):
@@ -50,7 +48,7 @@ def node(data, name=None, trainable=False, description=None, constraint=None):
                 warnings.warn(f"Name {name} is ignored because data is already a Node.")
             return data
         else:
-            return Node(data, name=name, description=description, constraint=constraint)
+            return Node(data, name=name, description=description)
 
 
 NAME_SCOPES = []  # A stack of name scopes
@@ -589,8 +587,9 @@ class NodeVizStyleGuide:
         """
         # using colon in the name causes problems in graphviz
         description = x.description
-        if len(x.description) > self.print_limit:
-            description = x.description[: self.print_limit] + "..."
+        description = '' if description is None else description
+        if len(description) > self.print_limit:
+            description = description[: self.print_limit] + "..."
 
         text = x.py_name + "\n" + description + "\n"
         content = str(x.data)
@@ -762,22 +761,20 @@ class Node(AbstractNode[T]):
         value (Any): The value to be assigned to the node.
         name (str, optional): The name of the node.
         trainable (bool, optional): Whether the node is trainable or not. Defaults to False.
-        description (str, optional): String describing the node. Defaults to "[Node] This is a node in a computational graph."
-        constraint (Union[None, str], optional): String describing constraints that the data should satisfy. Defaults to None.
+        description (str, optional): String describing the node which acts as a soft constraint. Defaults to None.
         info (Union[None, Dict], optional): Dictionary containing additional information about the node. Defaults to None.
 
     Attributes:
         trainable (bool): Whether the node is trainable or not.
         _feedback (dict): Dictionary of feedback from children nodes.
-        _description (str): String describing the node.
-        _constraint (str): String describing all constraints that the data should satisfy.
+        _description (str): String describing the node. Defaults to "[Node]".
         _backwarded (bool): Whether the backward method has been called.
         _info (dict): Dictionary containing additional information about the node.
         _dependencies (dict): Dictionary of dependencies on parameters and expandable nodes.
 
     Notes:
         The Node class extends AbstractNode to represent a data node in a directed graph.
-        It includes attributes and methods to handle feedback, constraints, and dependencies.
+        It includes attributes and methods to handle feedback, description, and dependencies.
         The node can be marked as trainable and store feedback from children nodes.
         The feedback mechanism is analogous to gradients in machine learning and propagates
         information back through the graph. The feedback mechanism supports non-commutative
@@ -792,27 +789,16 @@ class Node(AbstractNode[T]):
         *,
         name: str = None,
         trainable: bool = False,
-        description: str = "[Node] This is a node in a computational graph.",
-        constraint: Union[None, str] = None,
+        description: str = None,
         info: Union[None, Dict] = None,
-    ) -> None:
-        """Initialize an instance of the Node class.
-
-        Args:
-            value: The value to be assigned to the node.
-            name: The name of the node (optional).
-            trainable: A boolean indicating whether the node is trainable or not (optional).
-            description: A string describing the node (optional).
-            constraint: A string describing constraints on the node (optional).
-            info: A dictionary containing additional information about the node (optional).
-        """
+    ) -> None:    
 
         if description == "" or description is None:
-            description = "[Node] This is a node in a computational graph."
+            description = f"[{type(self).__name__}]"
 
         matched = re.match(r"^\[([^\[\]]+)\]", description)
         if not matched:
-            description = "[Node] " + description.strip()
+            description = f"[{type(self).__name__}] " + description.strip()
 
         super().__init__(value, name=name)
         self.trainable = trainable
@@ -822,7 +808,6 @@ class Node(AbstractNode[T]):
         # to support implementing aggregation that is not commutable.
         self._feedback = defaultdict(list)
         self._description = description
-        self._constraint = constraint
         self._backwarded = False
         self._info = info
         self._dependencies = {"parameter": set(), "expandable": set()}
@@ -843,8 +828,17 @@ class Node(AbstractNode[T]):
 
     @property
     def description(self):
-        """A textual description of the node."""
-        return self._description
+        """A textual description of the node."""        
+        # return self._description
+        # remove the operator type from the description
+        description = re.sub(r"^\[([^\[\]]+)\]", "", self._description).strip()
+        # return None if empty
+        return description if description else None
+    
+    @property
+    def op_name(self):
+        """The operator type of the node, extracted from the description."""
+        return get_op_name(self._description)
 
     @property
     def info(self):
@@ -1019,7 +1013,7 @@ class Node(AbstractNode[T]):
                         # Plot the edge from parent to node
                         # Bypass chain of identity operators (for better visualization)
                         while (
-                            get_op_name(parent.description) in IDENTITY_OPERATORS
+                            parent.op_name in IDENTITY_OPERATORS
                         ) and simple_visualization:
                             assert (
                                 len(parent.parents) == 1
@@ -2005,26 +1999,16 @@ class ParameterNode(Node[T]):
         *,
         name=None,
         trainable=True,
-        description="[ParameterNode] This is a ParameterNode in a computational graph.",
-        constraint=None,
+        description=None,
         projections=None,  # a list of Projection
         info=None,
     ) -> None:
-        if description is None or description == "":
-            description = (
-                "[ParameterNode] This is a ParameterNode in a computational graph."
-            )
-
-        matched = re.match(r"^\[([^\[\]]+)\]", description)
-        if not matched:
-            description = "[ParameterNode] " + description.strip()
 
         super().__init__(
             value,
             name=name,
             trainable=trainable,
             description=description,
-            constraint=constraint,
             info=info,
         )
         self._dependencies["parameter"].add(self)
@@ -2076,12 +2060,11 @@ class MessageNode(Node[T]):
         *,
         inputs: Union[List[Node], Dict[str, Node]],  # extra
         description: str,
-        constraint=None,
         name=None,
         info=None,
     ) -> None:
         super().__init__(
-            value, name=name, description=description, constraint=constraint, info=info
+            value, name=name, description=description, info=info
         )
 
         assert isinstance(inputs, list) or isinstance(
@@ -2178,8 +2161,7 @@ class ExceptionNode(MessageNode[T]):
         value: Exception,
         *,
         inputs: Union[List[Node], Dict[str, Node]],
-        description: str = "[ExceptionNode] This is node containing the error of execution.",
-        constraint=None,
+        description: str = None,
         name=None,
         info=None,
     ) -> None:
@@ -2191,7 +2173,6 @@ class ExceptionNode(MessageNode[T]):
             value,
             inputs=inputs,
             description=description,
-            constraint=constraint,
             name=name,
             info=info,
         )
