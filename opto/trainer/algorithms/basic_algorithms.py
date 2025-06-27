@@ -309,7 +309,7 @@ class BasicSearchAlgorithm(MinibatchAlgorithm):
 
         # TODO perhaps we can ask for multiple updates in one query or use different temperatures in different queries
         # Generate different proposals
-        step_kwargs = dict(bypassing=True, verbose='output')  # we don't print the inner full message
+        step_kwargs = dict(bypassing=True, verbose='output' if verbose else False)  # we don't print the inner full message
         step_kwargs.update(kwargs)  # update with additional kwargs if provided
         use_asyncio = self._use_asyncio()
         if use_asyncio:
