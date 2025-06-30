@@ -6,7 +6,7 @@ from tqdm.asyncio import tqdm_asyncio
 from opto.trace.bundle import ALLOW_EXTERNAL_DEPENDENCIES
 from opto.trace.modules import Module
 
-def async_run(runs, args_list = None, kwargs_list = None, max_workers = None, description = None):
+def async_run(runs, args_list = None, kwargs_list = None, max_workers = None, description = None, allow_sequential_run=True):
     """Run multiple functions in asynchronously.
 
     Args:
@@ -17,7 +17,7 @@ def async_run(runs, args_list = None, kwargs_list = None, max_workers = None, de
             If None, the default ThreadPoolExecutor behavior is used.
         description (str, optional): description to display in the progress bar.
             This can indicate the current stage (e.g., "Evaluating", "Training", "Optimizing").
-
+        allow_sequential_run (bool, optional): if True, runs the functions sequentially if max_workers is 1.
     """
     # if ALLOW_EXTERNAL_DEPENDENCIES is not False:
     #     warnings.warn(
@@ -27,25 +27,26 @@ def async_run(runs, args_list = None, kwargs_list = None, max_workers = None, de
     #         UserWarning,
     #     )
 
-
     if args_list is None:
         args_list = [[]] * len(runs)
     if kwargs_list is None:
         kwargs_list = [{}] * len(runs)
 
-    async def _run():
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            tasks = [loop.run_in_executor(executor, functools.partial(run, *args, **kwargs)) 
-                    for run, args, kwargs, in zip(runs, args_list, kwargs_list)]
-            
-            # Use the description in the tqdm progress bar if provided
-            if description:
-                return await tqdm_asyncio.gather(*tasks, desc=description)
-            else:
-                return await tqdm_asyncio.gather(*tasks)
-
-    return asyncio.run(_run())
+    if (max_workers == 1) and allow_sequential_run: # run without asyncio
+        return [run(*args, **kwargs) for run, args, kwargs in zip(runs, args_list, kwargs_list)]
+    else: 
+        async def _run():
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                tasks = [loop.run_in_executor(executor, functools.partial(run, *args, **kwargs)) 
+                        for run, args, kwargs, in zip(runs, args_list, kwargs_list)]
+                
+                # Use the description in the tqdm progress bar if provided
+                if description:
+                    return await tqdm_asyncio.gather(*tasks, desc=description)
+                else:
+                    return await tqdm_asyncio.gather(*tasks)
+        return asyncio.run(_run())
 
 
 def batch_run(fun, max_workers=None, description=None):
