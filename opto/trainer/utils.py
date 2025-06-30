@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm.asyncio import tqdm_asyncio
 from opto.trace.bundle import ALLOW_EXTERNAL_DEPENDENCIES
 from opto.trace.modules import Module
+from opto.trainer.guide import AutoGuide
 
 def async_run(runs, args_list = None, kwargs_list = None, max_workers = None, description = None, allow_sequential_run=True):
     """Run multiple functions in asynchronously.
@@ -49,7 +50,7 @@ def async_run(runs, args_list = None, kwargs_list = None, max_workers = None, de
         return asyncio.run(_run())
 
 
-def batch_run(fun, max_workers=None, description=None):
+def batch_run(max_workers=None, description=None):
     """
     Create a function that runs in parallel using asyncio, with support for batching.
     The batch size is inferred as the length of the longest argument or keyword argument.            
@@ -72,50 +73,64 @@ def batch_run(fun, max_workers=None, description=None):
         >>> @batch_run(max_workers=4, description="Processing batch")
         >>> def my_function(x, y):
         >>>     return x + y
-        >>>     x = [1, 2, 3, 4, 5]
-        >>>     y = 10
-        >>>     outputs = my_function(x, y)
-        >>>     # outputs will be [11, 12, 13, 14, 15]
-        >>>     # This will run the function in asynchronously with 4 threads   
+        >>> x = [1, 2, 3, 4, 5]
+        >>> y = 10
+        >>> outputs = my_function(x, y)
+        >>> # outputs will be [11, 12, 13, 14, 15]
+        >>> # This will run the function in asynchronously with 4 threads   
     """
     
-    
-    def _fun(*args, **kwargs):
+    def decorator(fun):
+        """
+        Decorator to create a function that runs in parallel using asyncio, with support for batching.
         
-        # We try to infer the batch size from the args
-        all_args = args + tuple(kwargs.values())
-        # find all list or array-like arguments and use their length as batch size
-        batch_size = max(len(arg) for arg in all_args if hasattr(arg, '__len__'))
-        
-        # broadcast the batch size to all args and record the indices that are broadcasted
-        args = [arg if hasattr(arg, '__len__') else [arg] * batch_size for arg in args]
-        kwargs = {k: v if hasattr(v, '__len__') else [v] * batch_size for k, v in kwargs.items()}   
+        Args:
+            fun (callable): The function to run.
+            
+            max_workers (int, optional): Maximum number of worker threads to use.
+                If None, the default ThreadPoolExecutor behavior is used.
+            description (str, optional): Description to display in the progress bar.
 
-        # assert that all args and kwargs have the same length
-        lengths = [len(arg) for arg in args] + [len(v) for v in kwargs.values()]
-        if len(set(lengths)) != 1:
-            raise ValueError("All arguments and keyword arguments must have the same length.")
+        Returns:
+            callable: A new function that processes batches of inputs.
+        """    
+        def _fun(*args, **kwargs):
+            
+            # We try to infer the batch size from the args
+            all_args = args + tuple(kwargs.values())
+            # find all list or array-like arguments and use their length as batch size
+            batch_size = max(len(arg) for arg in all_args if hasattr(arg, '__len__'))
+            
+            # broadcast the batch size to all args and record the indices that are broadcasted
+            args = [arg if hasattr(arg, '__len__') else [arg] * batch_size for arg in args]
+            kwargs = {k: v if hasattr(v, '__len__') else [v] * batch_size for k, v in kwargs.items()}   
 
-        # deepcopy if it is a trace.Module (as they may have mutable state)
-        # Module.copy() is used to create a new instance with the same parameters
-        _args = [arg.copy() if isinstance(arg, Module) else arg for arg in args]
-        _kwargs = {k: v.copy() if isinstance(v, Module) else v for k, v in kwargs.items()}
+            # assert that all args and kwargs have the same length
+            lengths = [len(arg) for arg in args] + [len(v) for v in kwargs.values()]
+            if len(set(lengths)) != 1:
+                raise ValueError("All arguments and keyword arguments must have the same length.")
 
-        # Run the forward function in parallel using asyncio with the same parameters. 
-        # Since trace.Node is treated as immutable, we can safely use the same instance.
-        # The resultant graph will be the same as if we had called the function with the original arguments.
+            # deepcopy if it is a trace.Module (as they may have mutable state)
+            # Module.copy() is used to create a new instance with the same parameters
+            _args = [arg.copy() if isinstance(arg, (Module, AutoGuide)) else arg for arg in args]
+            _kwargs = {k: v.copy() if isinstance(v, (Module, AutoGuide)) else v for k, v in kwargs.items()}
 
-        # convert _args and _kwargs (args, kwargs of list) to lists of args and kwargs
+            # Run the forward function in parallel using asyncio with the same parameters. 
+            # Since trace.Node is treated as immutable, we can safely use the same instance.
+            # The resultant graph will be the same as if we had called the function with the original arguments.
 
-        args_list = [tuple(aa[i] for aa in _args) for i in range(batch_size)]
-        kwargs_list = [{k: _kwargs[k][i] for k in _kwargs} for i in range(batch_size)]
+            # convert _args and _kwargs (args, kwargs of list) to lists of args and kwargs
 
-        outputs = async_run([fun] * batch_size, args_list=args_list, kwargs_list=kwargs_list,
-                            max_workers=max_workers, description=description)
-        return outputs
+            args_list = [tuple(aa[i] for aa in _args) for i in range(batch_size)]
+            kwargs_list = [{k: _kwargs[k][i] for k in _kwargs} for i in range(batch_size)]
 
-    return _fun
+            outputs = async_run([fun] * batch_size, args_list=args_list, kwargs_list=kwargs_list,
+                                max_workers=max_workers, description=description)
+            return outputs
 
+        return _fun
+
+    return decorator
 
 if __name__ == "__main__":
 
