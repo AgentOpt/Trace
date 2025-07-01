@@ -107,6 +107,15 @@ class Module(ParameterContainer):
 
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
+        
+    def copy(self):
+        """Return a deep copy of the module except for the parameters 
+        are set to the originals."""
+        new_module = copy.deepcopy(self)
+        for k, v in self.parameters_dict().items():
+            if hasattr(new_module, k):
+                setattr(new_module, k, v)
+        return new_module
 
     def save(self, file_name: str):
         """Save the parameters of the model to a pickle file."""

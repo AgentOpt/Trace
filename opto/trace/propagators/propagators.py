@@ -45,7 +45,7 @@ class Propagator(AbstractPropagator):
         self.override[operator_name] = propagate_function
 
     def propagate(self, child: MessageNode) -> Dict[Node, Any]:
-        operator_name = get_op_name(child.description)
+        operator_name = child.op_name
         if operator_name in self.override:
             return self.override[operator_name](child)
         else:
