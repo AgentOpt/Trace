@@ -4,7 +4,7 @@ from typing import Union
 from opto import trace
 from opto.trainer.algorithms.algorithm import AlgorithmBase
 from opto.trainer.loader import DataLoader
-from opto.trainer.utils import async_run
+from opto.trainer.utils import batch_run, async_run
 from opto.optimizers.utils import print_color
 from opto.trainer.evaluators import evaluate
 
@@ -78,7 +78,6 @@ class Minibatch(AlgorithmBase):
         log_frequency = log_frequency or eval_frequency  # frequency of logging (default to eval_frequency)
         num_threads = num_threads or self.num_threads  # Use provided num_threads or fall back to self.num_threads
         test_dataset = test_dataset or train_dataset  # default to train_dataset if test_dataset is not provided
-        use_asyncio = self._use_asyncio(num_threads)
         self.num_eval_samples = num_eval_samples  # number of samples to use to evaluate each input
 
         # Evaluate the agent before learning
@@ -104,13 +103,8 @@ class Minibatch(AlgorithmBase):
                 backup_dict = {p: copy.deepcopy(p.data) for p in self.agent.parameters()}
 
                 # Forward the agent on the inputs and compute the feedback using the guide
-                if use_asyncio: # Run forward asynchronously
-                    outputs = async_run([self.forward]*len(xs),
-                                       [(self.agent, x, guide, info) for x, info in zip(xs, infos)],
-                                       max_workers=num_threads,
-                                       description=f"Forward pass (batch size: {len(xs)})")  # async forward
-                else: # Run forward sequentially
-                    outputs = [self.forward(self.agent, x, guide, info) for x, info in zip(xs, infos) ]
+                forward = batch_run(max_workers=num_threads, description=f"Forward pass (batch size: {len(xs)})")(self.forward)
+                outputs = forward(self.agent, xs, guide, infos)
 
                 # Update the agent
                 score = self.update(outputs, verbose=verbose, num_threads=num_threads, **kwargs)
@@ -148,14 +142,14 @@ class Minibatch(AlgorithmBase):
 
         return train_scores, test_score
 
-    def evaluate(self, agent, guide, xs, infos, min_score=None, num_threads=None, description=None):
+    def evaluate(self, agent, guide, xs, infos, min_score=None, num_samples=1, num_threads=None, description=None):
         """ Evaluate the agent on the given dataset. """
         num_threads = num_threads or self.num_threads  # Use provided num_threads or fall back to self.num_threads
         test_scores = evaluate(agent, guide, xs, infos, min_score=min_score, num_threads=num_threads,
-                              description=description, num_samples=self.num_eval_samples)
+                               num_samples=num_samples, description=description, num_samples=self.num_eval_samples)
         if all([s is not None for s in test_scores]):
             return np.mean(test_scores)
-
+        
     def has_improvement(self, xs, guide, infos, current_score, current_outputs, backup_dict, threshold=0, num_threads=None, *args, **kwargs):
         # This function can be overridden by subclasses to implement their own improvement check.
         """ Check if the updated agent is improved compared to the current one.
@@ -311,15 +305,13 @@ class BasicSearchAlgorithm(MinibatchAlgorithm):
         # Generate different proposals
         step_kwargs = dict(bypassing=True, verbose='output' if verbose else False)  # we don't print the inner full message
         step_kwargs.update(kwargs)  # update with additional kwargs if provided
-        use_asyncio = self._use_asyncio()
-        if use_asyncio:
-            update_dicts = async_run([super().optimizer_step]*self.num_proposals,
-                                    kwargs_list=[step_kwargs] * self.num_proposals,
-                                    max_workers=num_threads,
-                                    description=f"Generating {self.num_proposals} proposals")  # async step
-        else:
-            update_dicts = [self.optimizer.step(**step_kwargs) for _ in range(self.num_proposals)]
-
+                
+        # Use aysnc_run to run the optimizer_step in parallel
+        # NOTE optimizer_step is coupled via async_run 
+        update_dicts = async_run([super().optimizer_step]*self.num_proposals,
+                                kwargs_list=[step_kwargs] * self.num_proposals,
+                                max_workers=num_threads,
+                                description=f"Generating {self.num_proposals} proposals")  # async step        
         # Validate the proposals
         candidates = []
         backup_dict = {p: copy.deepcopy(p.data) for p in self.agent.parameters()}  # backup the current value

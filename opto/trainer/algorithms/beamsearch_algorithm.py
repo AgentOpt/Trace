@@ -1,7 +1,7 @@
 import numpy as np
 import copy
 from typing import Union, List, Tuple, Dict, Any, Optional
-from opto.trainer.utils import async_run
+from opto.trainer.utils import async_run, batch_run
 from opto.optimizers.utils import print_color
 from opto.trainer.algorithms.basic_algorithms import MinibatchAlgorithm, evaluate, batchify
 
@@ -329,15 +329,9 @@ class BeamsearchAlgorithm(MinibatchAlgorithm):
         xs_batch, infos_batch = self._sample_minibatch(train_dataset, batch_size)
         
         # Forward the agent on the minibatch
-        use_asyncio = self._use_asyncio(num_threads)
-        if use_asyncio:
-            outputs = async_run([self.forward]*len(xs_batch),
-                               [(self.agent, x, guide, info) for x, info in zip(xs_batch, infos_batch)],
-                               max_workers=num_threads,
-                               description=f"Forward pass (beam {beam_idx+1}, batch size: {len(xs_batch)})")
-        else:
-            outputs = [self.forward(self.agent, x, guide, info) for x, info in zip(xs_batch, infos_batch)]
-        
+        forward = batch_run(max_workers=num_threads, description=f"Forward pass (batch size: {len(xs_batch)})")(self.forward)
+        outputs = forward(self.agent, xs_batch, guide, infos_batch)
+
         # Prepare for optimizer backward and step
         scores, targets, feedbacks = [], [], []
         for target, score, feedback in outputs:
@@ -356,13 +350,10 @@ class BeamsearchAlgorithm(MinibatchAlgorithm):
         candidates = []
         
         # Generate num_proposals candidates
-        if use_asyncio:
-            update_dicts = async_run([self.optimizer.step]*num_proposals,
-                                    kwargs_list=[step_kwargs] * num_proposals,
-                                    max_workers=num_threads,
-                                    description=f"Generating {num_proposals} proposals for beam {beam_idx+1}")
-        else:
-            update_dicts = [self.optimizer.step(**step_kwargs) for _ in range(num_proposals)]
+        update_dicts = async_run([self.optimizer.step]*num_proposals,
+                                kwargs_list=[step_kwargs] * num_proposals,
+                                max_workers=num_threads,
+                                description=f"Generating {num_proposals} proposals for beam {beam_idx+1}")
         
         # Collect all valid proposals
         for update_dict in update_dicts:
@@ -721,12 +712,9 @@ class BeamsearchHistoryAlgorithm(BeamsearchAlgorithm):
 
         use_asyncio = self._use_asyncio(num_threads)
         description=f"Forward pass (beam {beam_idx+1}, batch size: {len(xs_batch)})"
-        if use_asyncio:
-            outputs = async_run([self.forward]*len(xs_batch),
-                               [(self.agent, x, guide, info) for x, info in zip(xs_batch, infos_batch)],
-                               max_workers=num_threads, description=description)
-        else:
-            outputs = [self.forward(self.agent, x, guide, info) for x, info in zip(xs_batch, infos_batch)]
+        
+        forward = batch_run(max_workers=num_threads, description=description)(self.forward)
+        outputs = forward(self.agent, xs_batch, guide, infos_batch)
 
         # Prepare original feedback
         scores, targets, feedbacks = [], [], []

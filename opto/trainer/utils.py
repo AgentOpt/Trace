@@ -34,6 +34,7 @@ def async_run(runs, args_list = None, kwargs_list = None, max_workers = None, de
         kwargs_list = [{}] * len(runs)
 
     if (max_workers == 1) and allow_sequential_run: # run without asyncio
+        print(f"{description} (Running sequentially).")
         return [run(*args, **kwargs) for run, args, kwargs in zip(runs, args_list, kwargs_list)]
     else: 
         async def _run():

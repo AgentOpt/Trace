@@ -1,6 +1,7 @@
-from opto.trainer.utils import async_run, batch_run
+from opto.trainer.utils import batch_run
 from opto.trace import ExecutionError
 import copy
+import numpy as np
 
 
 def evaluate(agent, guide, inputs, infos, min_score=None, num_samples=1, num_threads=None, description=None):
@@ -35,5 +36,9 @@ def evaluate(agent, guide, inputs, infos, min_score=None, num_samples=1, num_thr
 
     # Run the evaluation in parallel
     scores = _evaluate(agent, guide, indices)
-
+    scores = np.array(scores)
+    if num_samples > 1:
+        # scores will be of length N * num_samples
+        # Reshape scores into an array of shape (N, num_samples)        
+        scores = scores.reshape(N, num_samples)
     return scores

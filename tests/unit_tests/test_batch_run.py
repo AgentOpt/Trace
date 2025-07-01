@@ -99,7 +99,6 @@ def test_evaluate():
         def get_feedback(self, query, response, reference=None):
             score = float(response == query + self.param + reference)
             feedback = f"Score: {score}, Response: {response}, Query: {query}"            
-            print(score, feedback)
             self.param += 1  # This should not affect the batch run
             return score, feedback
     
@@ -109,4 +108,9 @@ def test_evaluate():
     infos = [0, 1, 2, 3, 4]  # These are the expected outputs (query + param + info)
     evaluated_scores = evaluate(agent, guide, inputs, infos, num_samples=1, num_threads=1)
     expected_scores = [1, 0, 0, 0, 0]  # All inputs should match the expected outputs
-    assert evaluated_scores == expected_scores, f"Expected {expected_scores}, got {evaluated_scores}"   
+    assert (evaluated_scores == expected_scores).all(), f"Expected {expected_scores}, got {evaluated_scores}"   
+
+
+    evaluated_scores = evaluate(agent, guide, inputs, infos, num_samples=2, num_threads=1)
+    expected_scores = [[1, 1], [0, 0], [0, 0], [0, 0], [0, 0]]  # Each input should match the expected outputs twice
+    assert (evaluated_scores == expected_scores).all(), f"Expected {expected_scores}, got {evaluated_scores.tolist()}"
