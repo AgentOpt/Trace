@@ -1,4 +1,5 @@
-from opto.trainer.utils import async_run
+from opto.trainer.utils import async_run, batch_run
+from opto.trace import ExecutionError
 import copy
 
 
@@ -15,28 +16,24 @@ def evaluate(agent, guide, inputs, infos, min_score=None, num_samples=1, num_thr
         num_threads: Maximum number of threads to use for parallel evaluation
         description: Description to display in the progress bar
     """
+    assert len(inputs) == len(infos), "Inputs and infos must have the same length"
+    N = len(inputs)
+    # Use provided description or generate a default one
+    eval_description = description or f"Evaluating {N} examples"
 
-    def evaluate_single(agent, guide, i):
+    @batch_run(max_workers=num_threads, description=eval_description)
+    def _evaluate(agent, guide, i):
         try:
             output = agent(inputs[i]).data
             score = guide.metric(inputs[i], output, infos[i])
-        except:
+        except ExecutionError as e:
             score = min_score
         return score
 
-    N = len(inputs)
-    assert len(inputs) == len(infos), "Inputs and infos must have the same length"
-    # Use asyncio if num_threads is not None and > 1
-    use_asyncio = num_threads is not None and num_threads > 1
-
     # repeat each index num_samples times
     indices = [i for i in range(N) for _ in range(num_samples)]
-    if use_asyncio:
-        # Use provided description or generate a default one
-        eval_description = description or f"Evaluating {N} examples"
-        scores = async_run([evaluate_single] * N, [(copy.deepcopy(agent), copy.deepcopy(guide), i) for i in indices],
-                          max_workers=num_threads,
-                          description=eval_description) # list of tuples
-    else:
-        scores = [evaluate_single(agent, guide, i) for i in indices]
+
+    # Run the evaluation in parallel
+    scores = _evaluate(agent, guide, indices)
+
     return scores
