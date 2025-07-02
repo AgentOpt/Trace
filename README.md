@@ -15,7 +15,7 @@ losses, natural language text, compiler errors, etc.). Trace generalizes the bac
 propagating an AI system's execution trace. Trace is implemented as a PyTorch-like Python library. Users write Python
 code directly and can use Trace primitives to optimize certain parts, just like training neural networks!
 
-[Paper](https://arxiv.org/abs/2406.16218) | [Project website](https://microsoft.github.io/Trace/) | [Documentation](https://microsoft.github.io/Trace/intro.html) | [Blogpost](https://www.microsoft.com/en-us/research/blog/tracing-the-path-to-self-adapting-ai-agents/) | [Discord channel](https://discord.gg/4VeAvwFcWy)
+[Paper](https://arxiv.org/abs/2406.16218) | [Project website](https://microsoft.github.io/Trace/) | [Documentation](https://microsoft.github.io/Trace/intro.html) | [Blogpost](https://www.microsoft.com/en-us/research/blog/tracing-the-path-to-self-adapting-ai-agents/) | [Discord channel](https://discord.gg/4VeAvwFcWy) | [Roadmap](https://docs.google.com/spreadsheets/d/1dMoECd2Soj6bATpkNDeaMxl0ymOYCtGq7ZiHr0JRdJU/edit?usp=sharing)
 
 <p >
     <img src="https://github.com/microsoft/Trace/blob/main/docs/images/platform2.png" alt="drawing" width="100%"/>
@@ -38,7 +38,9 @@ git is unable to clone the repository.
 
 
 ## Updates
-- **2025.5.1** Ching-An Cheng gave a talk at 2nd Texas Colloquium on Distributed Learning (TL;DR)[https://sites.google.com/view/tldr-2025]
+- **2025.5.28** Datarobot released Efficient Search for Pareto-optimal Flows [syftr](https://github.com/datarobot/syftr) powered by Trace.
+- **2025.5.9** Adith Swaminathan gave a talk at [Netflix Workshop on Personalization, Recommendation and Search (PRS)](https://prs2025.splashthat.com/)
+- **2025.5.1** Ching-An Cheng gave a talk at [2nd Texas Colloquium on Distributed Learning (TL;DR)](https://sites.google.com/view/tldr-2025)
 - **2025.2.7** Trace was featured in the [G-Research NeurIPS highlight](https://www.gresearch.com/news/neurips-paper-reviews-2024-8/) by the Science Director Hugh Salimbeni.
 - **2024.12.10** Trace was demoed in person at NeurIPS 2024 Expo.
 - **2024.11.05** Ching-An Cheng gave a talk at UW Robotics Colloquium on Trace: [video](https://www.youtube.com/watch?v=T2g1Vo3u_9g).
@@ -391,6 +393,26 @@ Explains the role of feedback in LLM-based optimizers. An early work that influe
   <img src="https://contrib.rocks/image?repo=microsoft/Trace" />
 </a>
 
+## Contributing
+
+This project welcomes contributions and suggestions. Most contributions require you to agree to a
+Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
+the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
+
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide
+a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
+provided by the bot. You will only need to do this once across all repos using our CLA.
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
+contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+## Roadmap
+
+View our [Public Roadmap](https://docs.google.com/spreadsheets/d/1dMoECd2Soj6bATpkNDeaMxl0ymOYCtGq7ZiHr0JRdJU/edit?usp=sharing)
+
+You can learn about the features we are working on, areas where you can contribute, and future plans for Trace.
+
 ## Evaluation
 
 A previous version of Trace was tested with gpt-4-0125-preview on numerical optimization, simulated traffic control,
@@ -418,20 +440,6 @@ see [example](https://community.openai.com/t/gpt-4o-doesnt-consistently-respect-
   privacy and security.
 - The system should not be used in highly regulated domains where inaccurate outputs could suggest actions that lead to
   injury or negatively impact an individual's legal, financial, or life opportunities.
-
-## Contributing
-
-This project welcomes contributions and suggestions. Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
-
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
 
 ## Trademarks
 

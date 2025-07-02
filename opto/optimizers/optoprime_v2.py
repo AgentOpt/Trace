@@ -32,10 +32,10 @@ class OptoPrimeV2(OptoPrime):
         In #Variables, #Inputs, #Outputs, and #Others, the format is:
 
         <NODE>
-        (<data_type>) <variable_name> = <value>
+        (data_type) variable_name = value
         </NODE>
 
-        If <type> is (code), it means <value> is the source code of a python code, which may include docstring and definitions.
+        If `(data_type)` is `code`, it means `{value}` is the source code of a python code, which may include docstring and definitions.
         """
     )
 

@@ -72,7 +72,7 @@ def bundle(
             allow_external_dependencies=allow_external_dependencies,
             overwrite_python_recursion=overwrite_python_recursion,
             _ldict=prev_f_locals,  # Get the locals of the calling function
-            projections=None,
+            projections=projections,
         )
         return fun_module
 

@@ -9,7 +9,7 @@ from opto import trace
 from opto.trace.nodes import ParameterNode
 from opto.optimizers.utils import print_color
 from opto.trainer.algorithms import Minibatch
-from opto.trainer.algorithms.basic_algorithm import standard_optimization_step
+from opto.trainer.algorithms.basic_algorithms import standard_optimization_step
 from opto.utils.llm import LLM, AbstractModel
 
 

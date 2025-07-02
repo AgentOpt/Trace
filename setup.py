@@ -14,8 +14,10 @@ install_requires = [
     "litellm",
     "black",
     "scikit-learn",
+    "tensorboardX",
+    "tensorboard"
 ]
-
+    
 setuptools.setup(
     name="trace-opt",
     version=__version__,

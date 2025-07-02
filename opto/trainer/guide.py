@@ -53,22 +53,26 @@ class VerbalJudgeGuide(AutoGuide):
     This is an implementation of LLM-as-a-judge.
     """
 
+    DEFAULT_CORRECTNESS_TEMPLATE = "Correct [TERMINATE]"
+    DEFAULT_INCORRECTNESS_TEMPLATE = "Incorrect"
+
     DEFAULT_PROMPT_TEMPLATE = (
-        "The query is: {query}. The student answered: {response}. The correct answer is: {reference}. "
-        "If the student answer is correct, please say 'Correct [TERMINATE]'. "
-        "Otherwise, if the student answer is incorrect, please provide feedback to the student. "
+        "The query is: {query}.\n\n\nThe student answered: {response}.\n\n\nThe correct answer is: {reference}.\n\n\n"
+        "Reason whether the student answer is correct. If the student answer is correct, please say {correctness_template}. "
+        "Otherwise, if the student answer is incorrect, say {incorrectness_template} and provide feedback to the student. "
         "The feedback should be specific and actionable."
     )
 
     DEFAULT_SYSTEM_PROMPT = "You're a helpful teacher who provides clear and constructive feedback."
-    DEFAULT_CORRECTNESS_TEMPLATE = "Correct [TERMINATE]"
 
     def __init__(self,
                  model: Optional[str] = None,
                  llm: Optional[AbstractModel] = None,
                  prompt_template: Optional[str] = None,
                  system_prompt: Optional[str] = None,
-                 correctness_template: Optional[str] = None):
+                 correctness_template: Optional[str] = None,
+                 use_formatted_response: bool = True
+                 ):
         """
         Initialize the VerbalGuide with an LLM and prompt templates.
 
@@ -78,12 +82,14 @@ class VerbalJudgeGuide(AutoGuide):
             prompt_template: Custom prompt template with {response} and {reference} placeholders
             system_prompt: Custom system prompt for the LLM
             correctness_template: Template to use when response is deemed correct by metric
+            use_formatted_response: Whether to format the response with additional context; if False, the raw LLM response is returned
         """
         self.model = model
         self.llm = llm or LLM(model=model)
         self.prompt_template = prompt_template or self.DEFAULT_PROMPT_TEMPLATE
         self.system_prompt = system_prompt or self.DEFAULT_SYSTEM_PROMPT
         self.correctness_template = correctness_template or self.DEFAULT_CORRECTNESS_TEMPLATE
+        self.use_formatted_response = use_formatted_response
 
     def get_feedback(self, query: str, response: str, reference: Optional[str] = None, **kwargs) -> Tuple[float, str]:
         """
@@ -103,7 +109,12 @@ class VerbalJudgeGuide(AutoGuide):
             raise ValueError("ReferenceGuide requires reference information to generate feedback")
 
         # Check if metric function indicates perfect match
-        user_prompt = self.prompt_template.format(query=query, response=response, reference=reference)
+        user_prompt = self.prompt_template.format(
+                query=query, 
+                response=response, 
+                reference=reference, 
+                correctness_template=self.DEFAULT_CORRECTNESS_TEMPLATE, 
+                incorrectness_template=self.DEFAULT_INCORRECTNESS_TEMPLATE)
 
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -128,7 +139,7 @@ class VerbalJudgeGuide(AutoGuide):
 
         score = 1 if 'Correct [TERMINATE]' in llm_response else 0
 
-        return score, formatted_response
+        return score, formatted_response if self.use_formatted_response else llm_response
 
     def forward(self, task: str, response: str, info: Any, **kwargs) -> Tuple[float, str]:
         score, feedback = self.get_feedback(task, response, info, **kwargs)
