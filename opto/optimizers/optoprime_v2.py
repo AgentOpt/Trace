@@ -31,38 +31,46 @@ class OptoPrimeV2(OptoPrime):
 
         In #Variables, #Inputs, #Outputs, and #Others, the format is:
 
-        <NODE>
+        <node>
         (data_type) variable_name = value
-        </NODE>
+        </node>
 
         If `(data_type)` is `code`, it means `{value}` is the source code of a python code, which may include docstring and definitions.
         """
     )
 
     # Optimization
-    default_objective = "You need to change the <value> of the variables in #Variables to improve the output in accordance to #Feedback."
+    default_objective = "You need to change the `value` of the variables in #Variables to improve the output in accordance to #Feedback."
 
     output_format_prompt = dedent(
         """
         Output_format: Your output should be in the following XML/HTML format:
         
-        <Thinking>
-        Your reasoning
-        </Thinking>
+        <think>
+        Your reasoning on why you made the decision to suggest a new value. You can also use it to explain why you didn't 
+        </think>
         
-        "suggestion": {{
-            <variable_1>: <suggested_value_1>,
-            <variable_2>: <suggested_value_2>,
-        }}
-        }}
+        <improved_variable>
+            <name>variable_1_name</name>
+            <value>
+                new_value
+                ...
+            </value>
+        </improved_variable>
+        
+        <improved_variable>
+            <name>variable_2_name</name>
+            <value>
+                new_value
+                ...
+            </value>
+        </improved_variable>
 
-        In "reasoning", explain the problem: 1. what the #Instruction means 2. what the #Feedback on #Output means to #Variables considering how #Variables are used in #Code and other values in #Documentation, #Inputs, #Others. 3. Reasoning about the suggested changes in #Variables (if needed) and the expected result.
+        In <think>, explain the problem: 1. what the #Instruction means 2. what the #Feedback on #Output means to #Variables considering how #Variables are used in #Code and other values in #Documentation, #Inputs, #Others. 3. Reasoning about the suggested changes in #Variables (if needed) and the expected result.
 
-        If #Instruction asks for an answer, write it down in "answer".
+        If you need to suggest a change in the values of #Variables, write down the suggested values in <improved_variable>. Remember you can change only the values in #Variables, not others. When <type> of a variable is (code), you should write the new definition in the format of python code without syntax errors, and you should not change the function name or the function signature.
 
-        If you need to suggest a change in the values of #Variables, write down the suggested values in "suggestion". Remember you can change only the values in #Variables, not others. When <type> of a variable is (code), you should write the new definition in the format of python code without syntax errors, and you should not change the function name or the function signature.
-
-        If no changes or answer are needed, just output TERMINATE.
+        If no changes are needed, just output TERMINATE.
         """
     )
 
@@ -156,9 +164,16 @@ class OptoPrimeV2(OptoPrime):
         )
         self.example_response = dedent(
             """
-            {"reasoning": 'In this case, the desired response would be to change the value of input a to 14, as that would make the code return 10.',
-             "suggestion": {"a": 10}
-            }
+            <think>
+            In this case, the desired response would be to change the value of input a to 14, as that would make the code return 10.
+            </think>
+            
+            <improved_variable>
+                <name>a</name>
+                <value>
+                    10
+                </value>
+            </improved_variable>
             """
         )
 
@@ -176,9 +191,9 @@ class OptoPrimeV2(OptoPrime):
         temp_list = []
         for k, v in node_dict.items():
             if "__code" not in k:
-                temp_list.append(f"<NODE>\n({type(v[0]).__name__}) {k}={v[0]}\n</NODE>")
+                temp_list.append(f"<node>\n({type(v[0]).__name__}) {k}={v[0]}\n</node>")
             else:
-                temp_list.append(f"<NODE>\n(code) {k}:{v[0]}\n</NODE>")
+                temp_list.append(f"<node>\n(code) {k}:{v[0]}\n</node>")
         return "\n".join(temp_list)
 
     @staticmethod
@@ -187,10 +202,10 @@ class OptoPrimeV2(OptoPrime):
         for k, v in node_dict.items():
             if "__code" not in k:
                 if v[1] is not None:
-                    temp_list.append(f"<CONSTRAINT>\n({type(v[0]).__name__}) {k}: {v[1]}\n</CONSTRAINT>")
+                    temp_list.append(f"<constraint>\n({type(v[0]).__name__}) {k}: {v[1]}\n</constraint>")
             else:
                 if v[1] is not None:
-                    temp_list.append(f"<CONSTRAINT>\n(code) {k}: {v[1]}\n</CONSTRAINT>")
+                    temp_list.append(f"<constraint>\n(code) {k}: {v[1]}\n</constraint>")
         return "\n".join(temp_list)
 
     def construct_prompt(self, summary, mask=None, *args, **kwargs):
