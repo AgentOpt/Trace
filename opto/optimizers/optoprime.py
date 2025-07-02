@@ -42,7 +42,7 @@ def node_to_function_feedback(node_feedback: TraceGraph):
         visited.add(node)
 
         if node.is_root:  # Need an or condition here
-            roots.update({node.py_name: (node.data, node._constraint)})
+            roots.update({node.py_name: (node.data, node.description)})
         else:
             # Some might be root (i.e. blanket nodes) and some might be intermediate nodes
             # Blanket nodes belong to roots
@@ -52,12 +52,12 @@ def node_to_function_feedback(node_feedback: TraceGraph):
                 documentation.update({get_fun_name(node): node.description})
                 graph.append((level, repr_function_call(node)))
                 if level == depth:
-                    output.update({node.py_name: (node.data, node._constraint)})
+                    output.update({node.py_name: (node.data, node.description)})
                 else:
-                    others.update({node.py_name: (node.data, node._constraint)})
+                    others.update({node.py_name: (node.data, node.description)})
             else:
                 # this is a blanket node (classified into roots)
-                roots.update({node.py_name: (node.data, node._constraint)})
+                roots.update({node.py_name: (node.data, node.description)})
 
     return FunctionFeedback(
         graph=graph,
@@ -168,28 +168,49 @@ class OptoPrime(Optimizer):
     # Optimization
     default_objective = "You need to change the <value> of the variables in #Variables to improve the output in accordance to #Feedback."
 
-    output_format_prompt = dedent(
+    output_format_prompt_original = dedent(
         """
         Output_format: Your output should be in the following json format, satisfying the json syntax:
 
         {{
-        "reasoning": <Your reasoning>,
-        "answer": <Your answer>,
-        "suggestion": {{
+        "{reasoning}": <Your reasoning>,
+        "{answer}": <Your answer>,
+        "{suggestion}": {{
             <variable_1>: <suggested_value_1>,
             <variable_2>: <suggested_value_2>,
         }}
         }}
 
-        In "reasoning", explain the problem: 1. what the #Instruction means 2. what the #Feedback on #Output means to #Variables considering how #Variables are used in #Code and other values in #Documentation, #Inputs, #Others. 3. Reasoning about the suggested changes in #Variables (if needed) and the expected result.
+        In "{reasoning}", explain the problem: 1. what the #Instruction means 2. what the #Feedback on #Output means to #Variables considering how #Variables are used in #Code and other values in #Documentation, #Inputs, #Others. 3. Reasoning about the suggested changes in #Variables (if needed) and the expected result.
 
-        If #Instruction asks for an answer, write it down in "answer".
+        If #Instruction asks for an answer, write it down in "{answer}".
 
-        If you need to suggest a change in the values of #Variables, write down the suggested values in "suggestion". Remember you can change only the values in #Variables, not others. When <type> of a variable is (code), you should write the new definition in the format of python code without syntax errors, and you should not change the function name or the function signature.
+        If you need to suggest a change in the values of #Variables, write down the suggested values in "{suggestion}". Remember you can change only the values in #Variables, not others. When <type> of a variable is (code), you should write the new definition in the format of python code without syntax errors, and you should not change the function name or the function signature.
 
         If no changes or answer are needed, just output TERMINATE.
         """
     )
+
+    output_format_prompt_no_answer = dedent(
+        """
+        Output_format: Your output should be in the following json format, satisfying the json syntax:
+
+        {{
+        "{reasoning}": <Your reasoning>,
+        "{suggestion}": {{
+            <variable_1>: <suggested_value_1>,
+            <variable_2>: <suggested_value_2>,
+        }}
+        }}
+
+        In "{reasoning}", explain the problem: 1. what the #Instruction means 2. what the #Feedback on #Output means to #Variables considering how #Variables are used in #Code and other values in #Documentation, #Inputs, #Others. 3. Reasoning about the suggested changes in #Variables (if needed) and the expected result.
+
+        If you need to suggest a change in the values of #Variables, write down the suggested values in "{suggestion}". Remember you can change only the values in #Variables, not others. When <type> of a variable is (code), you should write the new definition in the format of python code without syntax errors, and you should not change the function name or the function signature.
+
+        If no changes are needed, just output TERMINATE.
+        """
+    )
+
 
     example_problem_template = dedent(
         """
@@ -234,6 +255,14 @@ class OptoPrime(Optimizer):
         """
     )
 
+    final_prompt_with_variables = dedent(
+        """
+        What are your suggestions on variables {names}?
+        
+        Your response:
+        """
+    )
+
     default_prompt_symbols = {
         "variables": "#Variables",
         "constraints": "#Constraints",
@@ -244,6 +273,12 @@ class OptoPrime(Optimizer):
         "instruction": "#Instruction",
         "code": "#Code",
         "documentation": "#Documentation",
+    }
+
+    default_json_keys = {
+        "reasoning": "reasoning",
+        "answer": "answer",
+        "suggestion": "suggestion",
     }
 
     def __init__(
@@ -259,7 +294,9 @@ class OptoPrime(Optimizer):
         max_tokens=4096,
         log=True,
         prompt_symbols=None,
+        json_keys=None,  # keys to use in the json object format (can remove "answer" if not needed)
         use_json_object_format=True,  # whether to use json object format for the response when calling LLM
+        highlight_variables=False,  # whether to highlight the variables at the end in the prompt
         **kwargs,
     ):
         super().__init__(parameters, *args, propagator=propagator, **kwargs)
@@ -295,7 +332,17 @@ class OptoPrime(Optimizer):
         self.prompt_symbols = copy.deepcopy(self.default_prompt_symbols)
         if prompt_symbols is not None:
             self.prompt_symbols.update(prompt_symbols)
+        if json_keys is not None:
+            self.default_json_keys.update(json_keys)        
+        if self.default_json_keys['answer'] is None:  # answer field is not needed 
+            del self.default_json_keys['answer']
+        if 'answer' not in self.default_json_keys:
+            # If 'answer' is not in the json keys, we use the no-answer format
+            self.output_format_prompt = self.output_format_prompt_no_answer.format(**self.default_json_keys)
+        else:  # If 'answer' is in the json keys, we use the original format of OptoPrime        
+            self.output_format_prompt = self.output_format_prompt_original.format(**self.default_json_keys)
         self.use_json_object_format = use_json_object_format
+        self.highlight_variables = highlight_variables
 
     def default_propagator(self):
         """Return the default Propagator object of the optimizer."""
@@ -361,7 +408,7 @@ class OptoPrime(Optimizer):
                 else ""
             ),
             documentation=(
-                "\n".join([v for v in summary.documentation.values()])
+                "\n".join([f"[{k}] {v}" for k, v in summary.documentation.items()])
                 if "#Documentation" not in mask
                 else ""
             ),
@@ -403,7 +450,17 @@ class OptoPrime(Optimizer):
                 )
                 + user_prompt
             )
-        user_prompt += self.final_prompt
+        
+        
+        if self.highlight_variables:
+            var_names = []
+            for k, v in summary.variables.items():
+                var_names.append(f"{k}")  # ({type(v[0]).__name__})
+            var_names = ", ".join(var_names)
+
+            user_prompt += self.final_prompt_with_variables.format(names=var_names)
+        else:  # This is the original OptoPrime prompt
+            user_prompt += self.final_prompt
 
         # Add examples
         if len(self.memory) > 0:
@@ -494,11 +551,13 @@ class OptoPrime(Optimizer):
 
     def extract_llm_suggestion(self, response: str):
         """Extract the suggestion from the response."""
+        suggestion_tag = self.default_json_keys["suggestion"]
+
         suggestion = {}
         attempt_n = 0
         while attempt_n < 2:
             try:
-                suggestion = json.loads(response)["suggestion"]
+                suggestion = json.loads(response)[suggestion_tag]
                 break
             except json.JSONDecodeError:
                 # Remove things outside the brackets
@@ -514,7 +573,7 @@ class OptoPrime(Optimizer):
 
         if len(suggestion) == 0:
             # we try to extract key/value separately and return it as a dictionary
-            pattern = r'"suggestion"\s*:\s*\{(.*?)\}'
+            pattern = rf'"{suggestion_tag}"\s*:\s*\{{(.*?)\}}'
             suggestion_match = re.search(pattern, str(response), re.DOTALL)
             if suggestion_match:
                 suggestion = {}
@@ -530,7 +589,7 @@ class OptoPrime(Optimizer):
 
         if len(suggestion) == 0:
             if not self.ignore_extraction_error:
-                print("Cannot extract suggestion from LLM's response:")
+                print(f"Cannot extract {self.default_json_keys['suggestion']} from LLM's response:")
                 print(response)
 
         # if the suggested value is a code, and the entire code body is empty (i.e., not even function signature is present)
