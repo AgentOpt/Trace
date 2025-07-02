@@ -38,8 +38,9 @@ git is unable to clone the repository.
 
 
 ## Updates
-- **2025.5.9** Adith Swaminathan gave a talk at Netflix Workshop on Personalization, Recommendation and Search (PRS)[https://prs2025.splashthat.com/]
-- **2025.5.1** Ching-An Cheng gave a talk at 2nd Texas Colloquium on Distributed Learning (TL;DR)[https://sites.google.com/view/tldr-2025]
+- **2025.5.28** Datarobot released Efficient Search for Pareto-optimal Flows [syftr](https://github.com/datarobot/syftr) powered by Trace.
+- **2025.5.9** Adith Swaminathan gave a talk at [Netflix Workshop on Personalization, Recommendation and Search (PRS)](https://prs2025.splashthat.com/)
+- **2025.5.1** Ching-An Cheng gave a talk at [2nd Texas Colloquium on Distributed Learning (TL;DR)](https://sites.google.com/view/tldr-2025)
 - **2025.2.7** Trace was featured in the [G-Research NeurIPS highlight](https://www.gresearch.com/news/neurips-paper-reviews-2024-8/) by the Science Director Hugh Salimbeni.
 - **2024.12.10** Trace was demoed in person at NeurIPS 2024 Expo.
 - **2024.11.05** Ching-An Cheng gave a talk at UW Robotics Colloquium on Trace: [video](https://www.youtube.com/watch?v=T2g1Vo3u_9g).
