@@ -12,6 +12,56 @@ from opto.utils.llm import AbstractModel, LLM
 from opto.optimizers.buffers import FIFOBuffer
 import copy
 
+import re
+from typing import Dict, Any
+
+
+def extract_xml_like_data(text: str) -> Dict[str, Any]:
+    """
+    Extract thinking content and improved variables from text containing XML-like tags.
+
+    Args:
+        text (str): Text containing <think> and <improved_variable> tags
+
+    Returns:
+        Dict containing:
+        - 'thinking': content of <think> element
+        - 'variables': dict mapping variable names to their values
+    """
+    result = {
+        'thinking': '',
+        'variables': {}
+    }
+
+    # Extract thinking content
+    think_pattern = r'<think>(.*?)</think>'
+    think_match = re.search(think_pattern, text, re.DOTALL)
+    if think_match:
+        result['thinking'] = think_match.group(1).strip()
+
+    # Extract improved variables
+    # Find all improved_variable blocks
+    var_pattern = r'<improved_variable>(.*?)</improved_variable>'
+    var_matches = re.findall(var_pattern, text, re.DOTALL)
+
+    for var_content in var_matches:
+        # Extract name
+        name_pattern = r'<name>(.*?)</name>'
+        name_match = re.search(name_pattern, var_content, re.DOTALL)
+
+        # Extract value
+        value_pattern = r'<value>(.*?)</value>'
+        value_match = re.search(value_pattern, var_content, re.DOTALL)
+
+        if name_match and value_match:
+            var_name = name_match.group(1).strip()
+            var_value = value_match.group(1).strip()
+
+            if var_name:  # Only add if name is not empty
+                result['variables'][var_name] = var_value
+
+    return result
+
 class OptoPrimeV2(OptoPrime):
     # This is generic representation prompt, which just explains how to read the problem.
     representation_prompt = dedent(
@@ -255,3 +305,82 @@ class OptoPrimeV2(OptoPrime):
         self.memory.add((summary.variables, summary.user_feedback))
 
         return system_prompt, user_prompt
+
+    def extract_llm_suggestion(self, response: str):
+        """Extract the suggestion from the response."""
+
+        suggestion = extract_xml_like_data(response)
+
+        # attempt_n = 0
+        # while attempt_n < 2:
+        #     try:
+        #         suggestion = json.loads(response)["suggestion"]
+        #         break
+        #     except json.JSONDecodeError:
+        #         # Remove things outside the brackets
+        #         response = re.findall(r"{.*}", response, re.DOTALL)
+        #         if len(response) > 0:
+        #             response = response[0]
+        #         attempt_n += 1
+        #     except Exception:
+        #         attempt_n += 1
+
+        # if not isinstance(suggestion, dict):
+        #     suggestion = {}
+        #
+        # if len(suggestion) == 0:
+        #     # we try to extract key/value separately and return it as a dictionary
+        #     pattern = r'"suggestion"\s*:\s*\{(.*?)\}'
+        #     suggestion_match = re.search(pattern, str(response), re.DOTALL)
+        #     if suggestion_match:
+        #         suggestion = {}
+        #         # Extract the entire content of the suggestion dictionary
+        #         suggestion_content = suggestion_match.group(1)
+        #         # Regex to extract each key-value pair;
+        #         # This scheme assumes double quotes but is robust to missing commas at the end of the line
+        #         pair_pattern = r'"([a-zA-Z0-9_]+)"\s*:\s*"(.*)"'
+        #         # Find all matches of key-value pairs
+        #         pairs = re.findall(pair_pattern, suggestion_content, re.DOTALL)
+        #         for key, value in pairs:
+        #             suggestion[key] = value
+
+        if len(suggestion) == 0:
+            if not self.ignore_extraction_error:
+                print("Cannot extract suggestion from LLM's response:")
+                print(response)
+
+        # if the suggested value is a code, and the entire code body is empty (i.e., not even function signature is present)
+        # then we remove such suggestion
+        keys_to_remove = []
+        for key, value in suggestion.items():
+            if "__code" in key and value.strip() == "":
+                keys_to_remove.append(key)
+        for key in keys_to_remove:
+            del suggestion[key]
+
+        return suggestion
+
+    def call_llm(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            verbose: Union[bool, str] = False,
+            max_tokens: int = 4096,
+    ):
+        """Call the LLM with a prompt and return the response."""
+        if verbose not in (False, "output"):
+            print("Prompt\n", system_prompt + user_prompt)
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        response = self.llm(messages=messages, max_tokens=max_tokens)
+
+        response = response.choices[0].message.content
+
+        if verbose:
+            print("LLM response:\n", response)
+        return response
+
