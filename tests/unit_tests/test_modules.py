@@ -348,62 +348,62 @@ def test_model_dump_and_import():
             super().__init__()
             self.offset = node(2, trainable=True)
             self.multiplier = node(1.5, trainable=True)
-        
+
         @bundle(trainable=True)
         def add(self, x, y):
             """Add two numbers with an offset"""
             return x + y + self.offset
-        
+
         @bundle(trainable=True)
         def multiply(self, x, y):
             """Multiply two numbers with a multiplier"""
             return x * y * self.multiplier
-    
+
     # Create instance and modify parameters
     calc = StrangeCalculator()
     calc.offset._data = 3
     calc.multiplier._data = 2.0
     calc.add.parameter._data = "def add(self, x, y):\n    return x + y + self.offset + 1"
     calc.multiply.parameter._data = "def multiply(self, x, y):\n    return x * y * self.multiplier * 2"
-    
+
     # Dump the model
     temp_file = "temp_calculator.py"
     try:
         calc.model_dump(temp_file)
-        
+
         # Import the dumped class
         import importlib.util
         spec = importlib.util.spec_from_file_location("temp_calculator", temp_file)
         temp_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(temp_module)
-        
+
         # Get the imported class
         ImportedCalculator = temp_module.StrangeCalculator
-        
+
         # Create instance and test functionality
         imported_calc = ImportedCalculator()
-        
+
         # Test the modified behavior
         result_add = imported_calc.add(5, 3)
         result_multiply = imported_calc.multiply(4, 2)
-        
+
         # Verify the results match our expected modified behavior
         # add: 5 + 3 + 3 + 1 = 12
         # multiply: 4 * 2 * 2.0 * 2 = 32
         assert result_add == 12, f"Expected 12, got {result_add}"
         assert result_multiply == 32, f"Expected 32, got {result_multiply}"
-        
+
         # Verify the attributes have the correct values
         assert imported_calc.offset == 3
         assert imported_calc.multiplier == 2.0
-        
+
     finally:
         if os.path.exists(temp_file):
             os.remove(temp_file)
 
 def test_copy_function():
     """Test the copy function of Module class."""
-    
+
     @model
     class TestCopyClass:
         def __init__(self):
@@ -412,76 +412,76 @@ def test_copy_function():
             self.regular_attr = "original_value"
             self.list_attr = [1, 2, 3]
             self.dict_attr = {"key": "value"}
-        
+
         @bundle(trainable=True)
         def test_method(self, x):
             return x + self._param
-        
+
         def forward(self, x):
             return self.test_method(x)
-    
+
     # Create original instance
     original = TestCopyClass()
     original.regular_attr = "modified_value"
     original.list_attr.append(4)
     original.dict_attr["new_key"] = "new_value"
-    
+
     # Create a copy
     copied = original.copy()
-    
+
     # Test that it's a different object
     assert copied is not original
-    
+
     # Test that regular attributes are copied (deep copy)
     assert copied.regular_attr == "modified_value"
     assert copied.list_attr == [1, 2, 3, 4]
     assert copied.dict_attr == {"key": "value", "new_key": "new_value"}
-    
+
     # Test that parameters are references to the original parameters
     assert copied._param is original._param
     assert copied.test_method.parameter is original.test_method.parameter
-    
+
     # Test that modifying the original parameter affects the copy
     original._param._data = 20
     assert copied._param._data == 20
-    
+
     # Test that modifying the copy's parameter affects the original
     copied._param._data = 30
     assert original._param._data == 30
-    
+
     # Test that the copy can still function
     result = copied.forward(5)
     assert result._data == 35  # 5 + 30
-    
+
     # Test that modifying regular attributes doesn't affect the original
     copied.regular_attr = "copy_only_value"
     assert original.regular_attr == "modified_value"
-    
+
     # Test that modifying list/dict attributes doesn't affect the original (deep copy)
     copied.list_attr.append(5)
     assert len(original.list_attr) == 4
     assert len(copied.list_attr) == 5
-    
+
     copied.dict_attr["copy_only"] = "copy_value"
     assert "copy_only" not in original.dict_attr
     assert "copy_only" in copied.dict_attr
 
 def test_copy_function_with_nested_modules():
     """Test the copy function with nested modules."""
-    
+
     @model
     class NestedModule:
         def __init__(self):
             super().__init__()
             self._nested_param = node(5, trainable=True)
-        
+
         @bundle(trainable=True)
         def nested_method(self, x):
             return x * self._nested_param
-        
+
         def forward(self, x):
             return self.nested_method(x)
-    
+
     @model
     class ParentModule:
         def __init__(self):
@@ -489,37 +489,37 @@ def test_copy_function_with_nested_modules():
             self._param = node(10, trainable=True)
             self._nested = NestedModule()
             self.regular_attr = "parent_value"
-        
+
         @bundle(trainable=True)
         def parent_method(self, x):
             return self._nested.forward(x) + self._param
-        
+
         def forward(self, x):
             return self.parent_method(x)
-    
+
     # Create original instance
     original = ParentModule()
     original.regular_attr = "modified_parent"
     original._nested._nested_param._data = 7
-    
+
     # Create a copy
     copied = ParentModule()
     copied = original.copy()
-    
+
     # Test that it's a different object
     assert copied is not original
-    
+
     # Test that nested module is copied but parameters are references
     assert copied._nested is not original._nested  # Different object
     assert copied._nested._nested_param is original._nested._nested_param  # Same parameter reference
-    
+
     # Test that regular attributes are copied
     assert copied.regular_attr == "modified_parent"
-    
+
     # Test that modifying nested parameter affects both
     original._nested._nested_param._data = 8
     assert copied._nested._nested_param._data == 8
-    
+
     # Test that the copy can still function
     result = copied.forward(3)
     assert result._data == 34  # (3 * 8) + 10
