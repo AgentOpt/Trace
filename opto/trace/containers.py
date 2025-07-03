@@ -2,6 +2,7 @@ import inspect
 from collections import UserDict, UserList
 from opto.trace.nodes import ParameterNode
 import functools
+import copy
 
 
 class NodeContainer:
@@ -49,7 +50,7 @@ class ParameterContainer(NodeContainer):
                 method = attr.func.__self__
                 if trainable_method(method):
                     parameters[name] = method.parameter
-            if trainable_method(attr):  # method attribute
+            elif trainable_method(attr):  # method attribute
                 parameters[name] = attr.parameter
             elif isinstance(attr, ParameterNode):
                 parameters[name] = attr
@@ -63,6 +64,30 @@ class ParameterContainer(NodeContainer):
 
         return parameters  # include both trainable and non-trainable parameters
 
+    def copy(self):
+        """Return a deep copy of the ParameterContainer except for the parameters
+        are set to the originals."""
+
+        # NOTE This current code is not optimized for speed; it does extra traversals and copying.
+
+        new_container = copy.deepcopy(self)
+
+        # Set the parameters to the original ones
+        for name, attr in inspect.getmembers(self):
+            if isinstance(attr, functools.partial):  # this is a class method
+                method = attr.func.__self__
+                if trainable_method(method):
+                    new_attr = getattr(new_container, name)
+                    setattr(new_attr.func.__self__, 'parameter', method.parameter)
+            elif trainable_method(attr):  # method attribute
+                new_attr = getattr(new_container, name)
+                new_attr.parameter = attr.parameter
+            elif isinstance(attr, ParameterNode):
+                setattr(new_container, name, attr)
+            elif isinstance(attr, ParameterContainer):
+                setattr(new_container, name, attr.copy())  # recursion
+
+        return new_container
 
 class Seq(UserList, ParameterContainer):
     """

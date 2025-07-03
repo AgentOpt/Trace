@@ -16,6 +16,7 @@ def model(cls):
     """
 
     class ModelWrapper(cls, Module):
+
         def model_dump(self, filename, projections: Optional[List[Projection]] = None):
             """Dump the model's source code to a file, including all methods and attributes.
             Ignores dunder methods unless they were overridden by the user.
@@ -24,7 +25,7 @@ def model(cls):
                 projections = [BlackCodeFormatter()]
 
             trace_model_body = f"class {cls.__name__}:\n"
-            
+
             # Get all members of the class
             all_members = inspect.getmembers(self)
             cls_members = inspect.getmembers(cls)
@@ -39,7 +40,7 @@ def model(cls):
 
                 if name not in cls_member_names:
                     continue
-                    
+
                 # Include if it's not a dunder method or if it was overridden
                 if not name.startswith('__'):
                     filtered_members.append((name, member))
@@ -72,7 +73,7 @@ def model(cls):
                     source = textwrap.dedent(source)
                     indented = textwrap.indent(source, "    ")
                     trace_model_body += indented
-                
+
                 if i < len(all_members) - 1:
                     trace_model_body += "\n"  # only one newline between members
 
@@ -80,7 +81,7 @@ def model(cls):
             # WARNING: there might be corner cases that this static analysis does not cover
             import re
             node_pattern = r'self\.(\w+)\s*=\s*node\([^)]*\)'
-            
+
             def replace_node(match):
                 attr_name = match.group(1)
                 if hasattr(self, attr_name):
@@ -88,7 +89,7 @@ def model(cls):
                     if hasattr(attr, 'data'):
                         return f"self.{attr_name} = {attr.data}"
                 return match.group(0)  # Return original if replacement not possible
-            
+
             trace_model_body = re.sub(node_pattern, replace_node, trace_model_body)
 
             trace_model_body = functools.reduce(lambda body, proj: proj.project(body), projections, trace_model_body)
