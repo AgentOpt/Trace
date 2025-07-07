@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Union, Tuple, Optional, Callable
 import json
 import re
+import copy
 from opto.utils.llm import LLM, AbstractModel
 from opto.trainer.suggest import Suggest
 
@@ -43,6 +44,16 @@ class AutoGuide:
     def metric(self, query: str, response: str, reference: Optional[str] = None, **kwargs) -> float:
         """ Exact match metric """
         return self.get_feedback(query, response, reference)[0]
+    
+    def copy(): 
+        """ Create a copy of the guide instance.
+
+        Returns:
+            A new instance of the same guide class with the same parameters.
+        """
+        # This is used in batch_run to create a new instance of the guide.
+        # This can be overridden by subclasses to provide a more specific copy behavior.
+        return copy.deepcopy(self)
 
 
 class VerbalJudgeGuide(AutoGuide):

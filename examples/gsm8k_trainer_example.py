@@ -71,7 +71,7 @@ def main():
     test_dataset = train_dataset
 
     agent = Learner(llm=LLM(student_model))
-    guide = Guide(model=LLM(teacher_model))
+    guide = Guide(llm=LLM(teacher_model))
     optimizer = OptoPrime(agent.parameters(), llm=LLM(optimizer_model))
     logger = Logger(verbose=verbose)
              # set use_json_object_format=False if LLM does not support JSON object format
