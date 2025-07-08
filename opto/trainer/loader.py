@@ -23,17 +23,32 @@ class DataLoader:
         self.replacement = replacement
         self.shuffle = shuffle
         self._indices = self._update_indices()
+        self._i = 0
 
     def __iter__(self):
-        indices = self._indices
-        for i in range(0, len(indices), self.batch_size):
-            xs = [ self.dataset['inputs'][ind]  for ind in indices[i:i + self.batch_size] ]
-            infos = [self.dataset['infos'][ind] for ind in indices[i:i + self.batch_size] ]
-            yield xs, infos
+        return self
 
-        if self.shuffle:
-            self._indices = self._update_indices()
+    def __next__(self):
+        """ Get the next batch of data """
+        if self._i >= len(self._indices):
+            if self.shuffle:
+                self._indices = self._update_indices()
+            self._i = 0
+            raise StopIteration
+        indices = self._indices[self._i: min(self._i + self.batch_size, len(self._indices))]
+        xs = [self.dataset['inputs'][ind] for ind in indices]
+        infos = [self.dataset['infos'][ind] for ind in indices]
+        self._i += self.batch_size
+        return xs, infos
 
     def _update_indices(self):
         N = len(self.dataset['inputs'])
         return np.random.choice(N, size=N, replace=self.replacement)
+
+    def sample(self):
+        """ Sample a batch of data from the dataset """
+        try:
+            xs, infos = next(self)
+            return xs, infos
+        except StopIteration:
+            return self.sample()
