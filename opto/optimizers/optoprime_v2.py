@@ -25,19 +25,19 @@ def extract_xml_like_data(text: str) -> Dict[str, Any]:
 
     Returns:
         Dict containing:
-        - 'thinking': content of <think> element
+        - 'reasoning': content of <reasoning> element
         - 'variables': dict mapping variable names to their values
     """
     result = {
-        'thinking': '',
+        'reasoning': '',
         'variables': {}
     }
 
     # Extract thinking content
-    think_pattern = r'<think>(.*?)</think>'
+    think_pattern = r'<reasoning>(.*?)</reasoning>'
     think_match = re.search(think_pattern, text, re.DOTALL)
     if think_match:
-        result['thinking'] = think_match.group(1).strip()
+        result['reasoning'] = think_match.group(1).strip()
 
     # Extract improved variables
     # Find all improved_variable blocks
@@ -62,7 +62,35 @@ def extract_xml_like_data(text: str) -> Dict[str, Any]:
 
     return result
 
+# TODO: solution1 -> solution2 -> solution3
+# TODO: param(solution) optimzer.step(solution, "reward is 1, maximize1) -> solution 2
+# TODO: maybe have a trace.train() # simpler even than Algorithm, and cover 80% of use cases
+
 class OptoPrimeV2(OptoPrime):
+    # TODO: 1. merge variable and constraint
+    # TODO: 2. Compact representation: some node is very long to describe in text, show a truncated version (long list of data)
+    # TODO: if the node displaying, if the string description is too long, we should have a limit on character we send to LLM, display truncated format
+    # TODO: (a flag to set it)
+    # TODO: LLM has the option to check the value of truncated one
+    # TODO: turn into a conversation round
+    # TODO: and show in a separate message
+    # TODO: 3. Compact representation (compress function)
+    # TODO: batchify, list of inputs, output is a list of inputs
+    # TODO: information is redundant
+    # TODO: idea 1: for each operator, we can identify repeated structure
+    # TODO: idea 2: for each bundle/op, the user can pass in a callable function, take original output, return a string
+    # TODO: idea 2-2: each node has a string representation of data, that's what the optimizer should use (this string is fixed)
+    # TODO: some are too redundant to describe
+    # TODO: x = a + b
+    # TODO: y = a + c
+    # TODO: z = f(x, y) => z = f(a+b, a+c)
+    # TODO: z = g(a, b, c)
+
+    # TODO: Node level change: format_data_repr(func: Callable[[Node], str]) -> None
+    # TODO: Check format data representation
+    # TODO: input would be the data of this node, return would be a string
+    # TODO: later on optimizer just calls this
+
     # This is generic representation prompt, which just explains how to read the problem.
     representation_prompt = dedent(
         """
@@ -92,13 +120,14 @@ class OptoPrimeV2(OptoPrime):
     # Optimization
     default_objective = "You need to change the `value` of the variables in #Variables to improve the output in accordance to #Feedback."
 
-    output_format_prompt = dedent(
+    output_format_prompt_template = dedent(
         """
         Output_format: Your output should be in the following XML/HTML format:
         
-        <think>
-        Your reasoning on why you made the decision to suggest a new value. You can also use it to explain why you didn't 
-        </think>
+        ```
+        <reasoning>
+        Your reasoning on why you made the decision to suggest a new value. You can also use it to explain why you didn't want to change it.
+        </reasoning>
         
         <improved_variable>
             <name>variable_1_name</name>
@@ -115,6 +144,7 @@ class OptoPrimeV2(OptoPrime):
                 ...
             </value>
         </improved_variable>
+        ```
 
         In <think>, explain the problem: 1. what the #Instruction means 2. what the #Feedback on #Output means to #Variables considering how #Variables are used in #Code and other values in #Documentation, #Inputs, #Others. 3. Reasoning about the suggested changes in #Variables (if needed) and the expected result.
 
@@ -169,6 +199,8 @@ class OptoPrimeV2(OptoPrime):
         """
     )
 
+    # TODO: add an option to replace XML tags if needed by user
+
     default_prompt_symbols = {
         "variables": "#Variables",
         "constraints": "#Constraints",
@@ -204,19 +236,19 @@ class OptoPrimeV2(OptoPrime):
             instruction=self.default_objective,
             code="y = add(x=a,y=b)\nz = subtract(x=y, y=c)",
             documentation="add: add x and y \nsubtract: subtract y from x",
-            variables="(int) a = 5",
+            variables="<node>\n(int) a = 5\n</node>",
             constraints="a: a > 0",
-            outputs="(int) z = 1",
-            others="(int) y = 6",
-            inputs="(int) b = 1\n(int) c = 5",
+            outputs="<node>\n(int) z = 1\n</node>",
+            others="<node>\n(int) y = 6\n</node>",
+            inputs="<node>\n(int) b = 1\n(int) c = 5\n</node>",
             feedback="The result of the code is not as expected. The result should be 10, but the code returns 1",
             stepsize=1,
         )
         self.example_response = dedent(
             """
-            <think>
+            <reasoning>
             In this case, the desired response would be to change the value of input a to 14, as that would make the code return 10.
-            </think>
+            </reasoning>
             
             <improved_variable>
                 <name>a</name>
@@ -226,6 +258,7 @@ class OptoPrimeV2(OptoPrime):
             </improved_variable>
             """
         )
+        self.output_format_prompt = self.output_format_prompt_template
 
         self.include_example = include_example
         self.max_tokens = max_tokens
