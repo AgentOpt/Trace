@@ -109,8 +109,21 @@ class OptoPrimeV2(OptoPrime):
 
         In #Variables, #Inputs, #Outputs, and #Others, the format is:
 
+        For primitive variables (int, float, list, etc.), we express as this:
         <node>
-        (data_type) variable_name = value
+            (data_type) variable_name = value 
+            <constraint>constraint_expression</constraint>
+        </node>
+        
+        For functions or code variables, we express as this:
+        <node>
+            <meta>(data_type) variable_name</meta> 
+            <value>
+                value
+            </value>
+            <constraint>
+                constraint_expression
+            </constraint>
         </node>
 
         If `(data_type)` is `code`, it means `{value}` is the source code of a python code, which may include docstring and definitions.
@@ -232,6 +245,17 @@ class OptoPrimeV2(OptoPrime):
         self.ignore_extraction_error = ignore_extraction_error
         self.llm = llm or LLM()
         self.objective = objective or self.default_objective
+        """
+        <node>
+            <meta>(data_type) variable_name</meta> 
+            <value>
+                value
+            </value>
+            <constraint>
+                constraint_expression
+            </constraint>
+        </node>
+        """
         self.example_problem = ProblemInstance.problem_template.format(
             instruction=self.default_objective,
             code="y = add(x=a,y=b)\nz = subtract(x=y, y=c)",
@@ -240,7 +264,7 @@ class OptoPrimeV2(OptoPrime):
             constraints="a: a > 0",
             outputs="<node>\n(int) z = 1\n</node>",
             others="<node>\n(int) y = 6\n</node>",
-            inputs="<node>\n(int) b = 1\n(int) c = 5\n</node>",
+            inputs="<node>\n(int) b = 1\n</node>\n<node>\n(int) c = 5\n</node>",
             feedback="The result of the code is not as expected. The result should be 10, but the code returns 1",
             stepsize=1,
         )
