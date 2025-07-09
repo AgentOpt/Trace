@@ -119,7 +119,7 @@ def extract_xml_like_data(text: str) -> Dict[str, Any]:
 # TODO: maybe have a trace.train() # simpler even than Algorithm, and cover 80% of use cases
 
 class OptoPrimeV2(OptoPrime):
-    # TODO: 1. merge variable and constraint
+    # TODO: 1. merge variable and constraint (DONE)
     # TODO: 2. Compact representation: some node is very long to describe in text, show a truncated version (long list of data)
     # TODO: if the node displaying, if the string description is too long, we should have a limit on character we send to LLM, display truncated format
     # TODO: (a flag to set it)
@@ -289,6 +289,7 @@ class OptoPrimeV2(OptoPrime):
         max_tokens=4096,
         log=True,
         prompt_symbols=None,
+        initial_var_char_limit=100,
         **kwargs,
     ):
         super().__init__(parameters, *args, propagator=propagator, **kwargs)
@@ -333,6 +334,7 @@ class OptoPrimeV2(OptoPrime):
             """
         )
         self.output_format_prompt = self.output_format_prompt_template
+        self.initial_var_char_limit = initial_var_char_limit
 
         self.include_example = include_example
         self.max_tokens = max_tokens
@@ -354,6 +356,29 @@ class OptoPrimeV2(OptoPrime):
                 constraint_expr = f"<constraint>\n(code) {k}: {v[1]}\n</constraint>"
                 temp_list.append(f"<node>\n<meta>(code) {k}</meta>\n<value>\n{v[0]}\n</value>\n{constraint_expr}\n</node>\n")
         return "\n".join(temp_list)
+
+    def repr_node_value_compact(self, node_dict):
+        temp_list = []
+        for k, v in node_dict.items():
+            if "__code" not in k:
+                constraint_expr = f"<constraint> ({type(v[0]).__name__}) {k}: {v[1]} </constraint>"
+                # https://stackoverflow.com/questions/1436703/what-is-the-difference-between-str-and-repr
+                # node_value = str(v[0])[:self.initial_var_char_limit]
+                node_value = self.truncate_expression(v[0], self.initial_var_char_limit)
+                temp_list.append(f"<node>\n({type(v[0]).__name__}) {k}={node_value}\n{constraint_expr}\n</node>\n")
+            else:
+                constraint_expr = f"<constraint>\n(code) {k}: {v[1]}\n</constraint>"
+                # node_value = str(v[0])[:self.initial_var_char_limit]
+                node_value = self.truncate_expression(v[0], self.initial_var_char_limit)
+                temp_list.append(
+                    f"<node>\n<meta>(code) {k}</meta>\n<value>\n{node_value}\n</value>\n{constraint_expr}\n</node>\n")
+        return "\n".join(temp_list)
+
+    def truncate_expression(self, value, limit):
+        value = str(value)
+        if len(value) > limit:
+            return value[:limit] + "...(skipped due to length limit)"
+        return value
 
     def construct_prompt(self, summary, mask=None, *args, **kwargs):
         """Construct the system and user prompt."""
@@ -418,18 +443,18 @@ class OptoPrimeV2(OptoPrime):
                 else ""
             ),
             variables=(
-                self.repr_node_value(summary.variables)
+                self.repr_node_value_compact(summary.variables)
                 if "#Variables" not in mask
                 else ""
             ),
             inputs=(
-                self.repr_node_value(summary.inputs) if "#Inputs" not in mask else ""
+                self.repr_node_value_compact(summary.inputs) if "#Inputs" not in mask else ""
             ),
             outputs=(
-                self.repr_node_value(summary.output) if "#Outputs" not in mask else ""
+                self.repr_node_value_compact(summary.output) if "#Outputs" not in mask else ""
             ),
             others=(
-                self.repr_node_value(summary.others) if "#Others" not in mask else ""
+                self.repr_node_value_compact(summary.others) if "#Others" not in mask else ""
             ),
             feedback=summary.user_feedback if "#Feedback" not in mask else "",
         )
