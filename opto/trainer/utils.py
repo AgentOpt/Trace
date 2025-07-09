@@ -113,8 +113,8 @@ def batch_run(max_workers=None, description=None):
 
             # deepcopy if it is a trace.Module (as they may have mutable state)
             # Module.copy() is used to create a new instance with the same parameters
-            _args = [arg.copy() if isinstance(arg, (Module, AutoGuide)) else arg for arg in args]
-            _kwargs = {k: v.copy() if isinstance(v, (Module, AutoGuide)) else v for k, v in kwargs.items()}
+            _args = [[a.copy() if isinstance(a, (Module, AutoGuide)) else a for a in arg ] for arg in args ]
+            _kwargs = {k: [a.copy() if isinstance(a, (Module, AutoGuide)) else a  for a in v ] for k, v in kwargs.items() }
 
             # Run the forward function in parallel using asyncio with the same parameters. 
             # Since trace.Node is treated as immutable, we can safely use the same instance.
