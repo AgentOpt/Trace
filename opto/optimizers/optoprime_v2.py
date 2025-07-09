@@ -2,7 +2,7 @@ import json
 from typing import Any, List, Dict, Union, Tuple
 from textwrap import dedent, indent
 from dataclasses import dataclass, asdict
-from opto.optimizers.optoprime import OptoPrime, ProblemInstance
+from opto.optimizers.optoprime import OptoPrime
 
 from opto.trace.nodes import ParameterNode, Node, MessageNode
 from opto.trace.propagators import TraceGraph, GraphPropagator
@@ -14,6 +14,58 @@ import copy
 
 import re
 from typing import Dict, Any
+
+@dataclass
+class ProblemInstance:
+    instruction: str
+    code: str
+    documentation: str
+    variables: str
+    inputs: str
+    others: str
+    outputs: str
+    feedback: str
+
+    problem_template = dedent(
+        """
+        #Instruction
+        {instruction}
+
+        #Code
+        {code}
+
+        #Documentation
+        {documentation}
+
+        #Variables
+        {variables}
+
+        #Inputs
+        {inputs}
+
+        #Others
+        {others}
+
+        #Outputs
+        {outputs}
+
+        #Feedback
+        {feedback}
+        """
+    )
+
+    def __repr__(self) -> str:
+        return self.problem_template.format(
+            instruction=self.instruction,
+            code=self.code,
+            documentation=self.documentation,
+            variables=self.variables,
+            inputs=self.inputs,
+            outputs=self.outputs,
+            others=self.others,
+            feedback=self.feedback,
+        )
+
 
 
 def extract_xml_like_data(text: str) -> Dict[str, Any]:
@@ -101,7 +153,6 @@ class OptoPrimeV2(OptoPrime):
         - #Code: the code defined in the problem.
         - #Documentation: the documentation of each function used in #Code. The explanation might be incomplete and just contain high-level description. You can use the values in #Others to help infer how those functions work.
         - #Variables: the input variables that you can change.
-        - #Constraints: the constraints or descriptions of the variables in #Variables.
         - #Inputs: the values of other inputs to the code, which are not changeable.
         - #Others: the intermediate values created through the code execution.
         - #Outputs: the result of the code output.
@@ -216,7 +267,6 @@ class OptoPrimeV2(OptoPrime):
 
     default_prompt_symbols = {
         "variables": "#Variables",
-        "constraints": "#Constraints",
         "inputs": "#Inputs",
         "outputs": "#Outputs",
         "others": "#Others",
@@ -298,21 +348,11 @@ class OptoPrimeV2(OptoPrime):
         temp_list = []
         for k, v in node_dict.items():
             if "__code" not in k:
-                temp_list.append(f"<node>\n({type(v[0]).__name__}) {k}={v[0]}\n</node>")
+                constraint_expr = f"<constraint> ({type(v[0]).__name__}) {k}: {v[1]} </constraint>"
+                temp_list.append(f"<node>\n({type(v[0]).__name__}) {k}={v[0]}\n{constraint_expr}\n</node>\n")
             else:
-                temp_list.append(f"<node>\n(code) {k}:{v[0]}\n</node>")
-        return "\n".join(temp_list)
-
-    @staticmethod
-    def repr_node_constraint(node_dict):
-        temp_list = []
-        for k, v in node_dict.items():
-            if "__code" not in k:
-                if v[1] is not None:
-                    temp_list.append(f"<constraint>\n({type(v[0]).__name__}) {k}: {v[1]}\n</constraint>")
-            else:
-                if v[1] is not None:
-                    temp_list.append(f"<constraint>\n(code) {k}: {v[1]}\n</constraint>")
+                constraint_expr = f"<constraint>\n(code) {k}: {v[1]}\n</constraint>"
+                temp_list.append(f"<node>\n<meta>(code) {k}</meta>\n<value>\n{v[0]}\n</value>\n{constraint_expr}\n</node>\n")
         return "\n".join(temp_list)
 
     def construct_prompt(self, summary, mask=None, *args, **kwargs):
@@ -363,43 +403,42 @@ class OptoPrimeV2(OptoPrime):
 
         return system_prompt, user_prompt
 
+    def problem_instance(self, summary, mask=None):
+        mask = mask or []
+        return ProblemInstance(
+            instruction=self.objective if "#Instruction" not in mask else "",
+            code=(
+                "\n".join([v for k, v in sorted(summary.graph)])
+                if "#Code" not in mask
+                else ""
+            ),
+            documentation=(
+                "\n".join([f"[{k}] {v}" for k, v in summary.documentation.items()])
+                if "#Documentation" not in mask
+                else ""
+            ),
+            variables=(
+                self.repr_node_value(summary.variables)
+                if "#Variables" not in mask
+                else ""
+            ),
+            inputs=(
+                self.repr_node_value(summary.inputs) if "#Inputs" not in mask else ""
+            ),
+            outputs=(
+                self.repr_node_value(summary.output) if "#Outputs" not in mask else ""
+            ),
+            others=(
+                self.repr_node_value(summary.others) if "#Others" not in mask else ""
+            ),
+            feedback=summary.user_feedback if "#Feedback" not in mask else "",
+        )
+
+
     def extract_llm_suggestion(self, response: str):
         """Extract the suggestion from the response."""
 
         suggestion = extract_xml_like_data(response)
-
-        # attempt_n = 0
-        # while attempt_n < 2:
-        #     try:
-        #         suggestion = json.loads(response)["suggestion"]
-        #         break
-        #     except json.JSONDecodeError:
-        #         # Remove things outside the brackets
-        #         response = re.findall(r"{.*}", response, re.DOTALL)
-        #         if len(response) > 0:
-        #             response = response[0]
-        #         attempt_n += 1
-        #     except Exception:
-        #         attempt_n += 1
-
-        # if not isinstance(suggestion, dict):
-        #     suggestion = {}
-        #
-        # if len(suggestion) == 0:
-        #     # we try to extract key/value separately and return it as a dictionary
-        #     pattern = r'"suggestion"\s*:\s*\{(.*?)\}'
-        #     suggestion_match = re.search(pattern, str(response), re.DOTALL)
-        #     if suggestion_match:
-        #         suggestion = {}
-        #         # Extract the entire content of the suggestion dictionary
-        #         suggestion_content = suggestion_match.group(1)
-        #         # Regex to extract each key-value pair;
-        #         # This scheme assumes double quotes but is robust to missing commas at the end of the line
-        #         pair_pattern = r'"([a-zA-Z0-9_]+)"\s*:\s*"(.*)"'
-        #         # Find all matches of key-value pairs
-        #         pairs = re.findall(pair_pattern, suggestion_content, re.DOTALL)
-        #         for key, value in pairs:
-        #             suggestion[key] = value
 
         if len(suggestion) == 0:
             if not self.ignore_extraction_error:
