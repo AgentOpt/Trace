@@ -329,6 +329,40 @@ class TestXMLParsing(unittest.TestCase):
         }
         self.assertEqual(result, expected)
 
+    def test_xml_with_random_text(self):
+        """Test that parser extracts XML content while ignoring random text"""
+        text = """
+        This is some random texts with random symbols `~!@#$%^&*()-=[]\;',./_+{}|:"<>?. 
+        
+        <reasoning>
+        Some reasoning. 
+        </reasoning>
+        
+        Some other random texts with random symbols `~!@#$%^&*()-=[]\;',./_+{}|:"<>?. 
+        
+        <variable>
+        <name>var1</name>
+        <value>value1</value>
+        </variable>
+          
+        Yet another random texts with random symbols `~!@#$%^&*()-=[]\;',./_+{}|:"<>?. 
+        
+        <variable>
+        <name>var2</name>
+        <value>value2</value>
+        </variable>
+        """
+        
+        result = extract_xml_like_data(text, name_tag="name", value_tag="value")
+        expected = {
+            'reasoning': 'Some reasoning.',
+            'variables': {
+                'var1': 'value1',
+                'var2': 'value2'
+            }
+        }
+        self.assertEqual(result, expected)
+
 
 if __name__ == '__main__':
     unittest.main()
