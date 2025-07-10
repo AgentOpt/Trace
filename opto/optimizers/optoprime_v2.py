@@ -273,8 +273,8 @@ class OptoPrimeV2(OptoPrime):
         - {instruction_section_title}: the instruction which describes the things you need to do or the question you should answer.
         - {code_section_title}: the code defined in the problem.
         - {documentation_section_title}: the documentation of each function used in #Code. The explanation might be incomplete and just contain high-level description. You can use the values in #Others to help infer how those functions work.
-        - {variables_section_title}: the input variables that you can change.
-        - {inputs_section_title}: the values of other inputs to the code, which are not changeable.
+        - {variables_section_title}: the input variables that you can change/tweak (trainable).
+        - {inputs_section_title}: the values of fixed inputs to the code, which CANNOT be changed (fixed).
         - {others_section_title}: the intermediate values created through the code execution.
         - {outputs_section_title}: the result of the code output.
         - {feedback_section_title}: the feedback about the code's execution result.
