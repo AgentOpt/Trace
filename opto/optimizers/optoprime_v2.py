@@ -360,7 +360,6 @@ class OptoPrimeV2(OptoPrime):
         """
     )
 
-
     def __init__(
             self,
             parameters: List[ParameterNode],
@@ -386,17 +385,7 @@ class OptoPrimeV2(OptoPrime):
                                                                     feedback_section_title= optimizer_prompt_symbol_set.feedback_section_title)
         self.initial_var_char_limit = initial_var_char_limit
         self.optimizer_prompt_symbol_set = optimizer_prompt_symbol_set
-        # self.example_problem = ProblemInstance.problem_template.format(
-        #     instruction=self.objective,
-        #     code="y = add(x=a,y=b)\nz = subtract(x=y, y=c)",
-        #     documentation="add: add x and y \nsubtract: subtract y from x",
-        #     variables="""<variable name="a" type="int">\n<value>\n5\n</value>\n<constraint>\na: a > 0\n</constraint>\n</variable>""",
-        #     outputs="""<node name="z" type="int">\n<value>\n1\n</value>\n</node>""",
-        #     others="""<node name="y" type="int">\n<value>\n6\n</value>\n</node>""",
-        #     inputs="""<node name="b" type="int">\n<value>\n1\n</value>\n</node>\n<node name="c" type="int">\n<value>\n5\n</value>\n</node>""",
-        #     feedback="The result of the code is not as expected. The result should be 10, but the code returns 1",
-        #     stepsize=1,
-        # )
+
         self.example_problem_summary = FunctionFeedback(graph=[(1, 'y = add(x=a,y=b)'), (2, "z = subtract(x=y, y=c)")],
                                                         documentation={'add': 'This is an add operator of x and y.',
                                                                        'subtract': "subtract y from x"},
@@ -413,16 +402,16 @@ class OptoPrimeV2(OptoPrime):
         self.example_problem = self.problem_instance(self.example_problem_summary)
         self.example_response = dedent(
             f"""
-            <reasoning>
+            <{self.optimizer_prompt_symbol_set.reasoning_tag}>
             In this case, the desired response would be to change the value of input a to 14, as that would make the code return 10.
-            </reasoning>
+            </{self.optimizer_prompt_symbol_set.reasoning_tag}>
             
-            <variable>
-            <name>a</name>
-            <value>
+            <{self.optimizer_prompt_symbol_set.improved_variable_tag}>
+            <{self.optimizer_prompt_symbol_set.name_tag}>a</{self.optimizer_prompt_symbol_set.name_tag}>
+            <{self.optimizer_prompt_symbol_set.value_tag}>
             10
-            </value>
-            </variable>
+            </{self.optimizer_prompt_symbol_set.value_tag}>
+            </{self.optimizer_prompt_symbol_set.improved_variable_tag}>
             """
         )
 
