@@ -178,6 +178,7 @@ class ProblemInstance:
             feedback=self.feedback,
         )
 
+
 class OptimizerPromptSymbolSet:
     """
     By inheriting this class and pass into the optimizer. People can change the optimizer documentation
@@ -225,6 +226,7 @@ class OptimizerPromptSymbolSet:
             raise NotImplementedError(
                 "If you supplied a custom output format prompt template, you need to implement your own response extractor")
 
+
 class OptimizerPromptSymbolSet2(OptimizerPromptSymbolSet):
     variables_section_title = "# Variables"
     inputs_section_title = "# Inputs"
@@ -261,16 +263,6 @@ class OptoPrimeV2(OptoPrime):
     # TODO: idea 1: for each operator, we can identify repeated structure
     # TODO: idea 2: for each bundle/op, the user can pass in a callable function, take original output, return a string
     # TODO: idea 2-2: each node has a string representation of data, that's what the optimizer should use (this string is fixed)
-    # TODO: some are too redundant to describe
-    # TODO: x = a + b
-    # TODO: y = a + c
-    # TODO: z = f(x, y) => z = f(a+b, a+c)
-    # TODO: z = g(a, b, c)
-
-    # TODO: Node level change: format_data_repr(func: Callable[[Node], str]) -> None
-    # TODO: Check format data representation
-    # TODO: input would be the data of this node, return would be a string
-    # TODO: later on optimizer just calls this
 
     # This is generic representation prompt, which just explains how to read the problem.
     representation_prompt = dedent(
@@ -369,7 +361,7 @@ class OptoPrimeV2(OptoPrime):
             objective: Union[None, str] = None,
             ignore_extraction_error: bool = True,
             # ignore the type conversion error when extracting updated values from LLM's suggestion
-            include_example=False,  # TODO # include example problem and response in the prompt
+            include_example=False,
             memory_size=0,  # Memory size to store the past feedback
             max_tokens=4096,
             log=True,
@@ -381,8 +373,8 @@ class OptoPrimeV2(OptoPrime):
         self.ignore_extraction_error = ignore_extraction_error
         self.llm = llm or LLM()
         self.objective = objective or self.default_objective.format(value_tag=optimizer_prompt_symbol_set.value_tag,
-                                                                    variables_section_title= optimizer_prompt_symbol_set.variables_section_title,
-                                                                    feedback_section_title= optimizer_prompt_symbol_set.feedback_section_title)
+                                                                    variables_section_title=optimizer_prompt_symbol_set.variables_section_title,
+                                                                    feedback_section_title=optimizer_prompt_symbol_set.feedback_section_title)
         self.initial_var_char_limit = initial_var_char_limit
         self.optimizer_prompt_symbol_set = optimizer_prompt_symbol_set
 
@@ -455,7 +447,7 @@ class OptoPrimeV2(OptoPrime):
             instruction_section_title=self.optimizer_prompt_symbol_set.instruction_section_title.replace(" ", ""),
             code_section_title=self.optimizer_prompt_symbol_set.code_section_title.replace(" ", ""),
             documentation_section_title=self.optimizer_prompt_symbol_set.documentation_section_title.replace(" ", ""),
-            others_section_title = self.optimizer_prompt_symbol_set.others_section_title.replace(" ", "")
+            others_section_title=self.optimizer_prompt_symbol_set.others_section_title.replace(" ", "")
         )
         self.output_format_prompt = self.output_format_prompt_template.format(
             output_format=dedent(f"""
