@@ -87,6 +87,7 @@ def test_node_copy_clone_deepcopy():
     z_new = ops.identity(z)
     z_clone = z.clone()
     z_copy = copy.deepcopy(z)
+    assert z_copy.name == z.py_name + '_copy:0'
     assert z_new.data == z.data
     assert z_clone.data == z.data
     assert z_copy.data == z.data
