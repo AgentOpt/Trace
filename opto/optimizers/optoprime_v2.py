@@ -15,57 +15,6 @@ import copy
 import re
 from typing import Dict, Any
 
-@dataclass
-class ProblemInstance:
-    instruction: str
-    code: str
-    documentation: str
-    variables: str
-    inputs: str
-    others: str
-    outputs: str
-    feedback: str
-
-    problem_template = dedent(
-        """
-        # Instruction
-        {instruction}
-
-        # Code
-        {code}
-
-        # Documentation
-        {documentation}
-
-        # Variables
-        {variables}
-
-        # Inputs
-        {inputs}
-
-        # Others
-        {others}
-
-        # Outputs
-        {outputs}
-
-        # Feedback
-        {feedback}
-        """
-    )
-
-    def __repr__(self) -> str:
-        return self.problem_template.format(
-            instruction=self.instruction,
-            code=self.code,
-            documentation=self.documentation,
-            variables=self.variables,
-            inputs=self.inputs,
-            outputs=self.outputs,
-            others=self.others,
-            feedback=self.feedback,
-        )
-
 def extract_top_level_blocks(text: str, tag: str):
     """Extract all top-level <tag>...</tag> blocks from text."""
     blocks = []
@@ -169,6 +118,60 @@ def extract_xml_like_data(text: str) -> Dict[str, Any]:
                 result['variables'][var_name] = var_value
     return result
 
+@dataclass
+class ProblemInstance:
+    instruction: str
+    code: str
+    documentation: str
+    variables: str
+    inputs: str
+    others: str
+    outputs: str
+    feedback: str
+
+    problem_template = dedent(
+        """
+        # Instruction
+        {instruction}
+
+        # Code
+        {code}
+
+        # Documentation
+        {documentation}
+
+        # Variables
+        {variables}
+
+        # Inputs
+        {inputs}
+
+        # Others
+        {others}
+
+        # Outputs
+        {outputs}
+
+        # Feedback
+        {feedback}
+        """
+    )
+
+    def __repr__(self) -> str:
+        return self.problem_template.format(
+            instruction=self.instruction,
+            code=self.code,
+            documentation=self.documentation,
+            variables=self.variables,
+            inputs=self.inputs,
+            outputs=self.outputs,
+            others=self.others,
+            feedback=self.feedback,
+        )
+
+class OptimizerPromptTagSet:
+    """By inheriting this class and pass into the optimizer. People can change the optimizer documentation"""
+    pass
 
 # TODO: solution1 -> solution2 -> solution3
 # TODO: param(solution) optimzer.step(solution, "reward is 1, maximize1) -> solution 2
