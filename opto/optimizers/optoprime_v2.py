@@ -90,7 +90,7 @@ def extract_reasoning_and_remainder(text: str, tag: str = "reasoning"):
 
 
 def extract_xml_like_data(text: str, reasoning_tag: str = "reasoning",
-                          improved_variable_tag: str = "improved_variable",
+                          improved_variable_tag: str = "variable",
                           name_tag: str = "name",
                           value_tag: str = "value") -> Dict[str, Any]:
     """
