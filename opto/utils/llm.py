@@ -313,6 +313,36 @@ class LLMFactory:
             return cls._profiles.get(profile)
         return cls._profiles
 
+
+class DummyLLM(AbstractModel):
+    """A dummy LLM that does nothing. Used for testing purposes."""
+    
+    def __init__(self, 
+                 callable,
+                 reset_freq: Union[int, None] = None) -> None:
+        # self.message = message
+        self.callable = callable
+        factory = lambda: self._factory()
+        super().__init__(factory, reset_freq)
+
+    def _factory(self):
+
+        # set response.choices[0].message.content
+        # create a fake container with above format
+
+        class Message: 
+            def __init__(self, content):
+                self.content = content
+        class Choice:
+            def __init__(self, content):
+                self.message = Message(content)
+        class Response:
+            def __init__(self, content):
+                self.choices = [Choice(content)]
+
+        return lambda *args, **kwargs:  Response(self.callable(*args, **kwargs))
+
+
 class LLM:
     """
     A unified entry point for all supported LLM backends.
