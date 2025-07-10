@@ -66,12 +66,81 @@ class ProblemInstance:
             feedback=self.feedback,
         )
 
+def extract_top_level_blocks(text: str, tag: str):
+    """Extract all top-level <tag>...</tag> blocks from text."""
+    blocks = []
+    start_tag = f'<{tag}>'
+    end_tag = f'</{tag}>'
+    stack = []
+    start = None
+    i = 0
+    while i < len(text):
+        if text.startswith(start_tag, i):
+            if not stack:
+                start = i + len(start_tag)
+            stack.append(i)
+            i += len(start_tag)
+        elif text.startswith(end_tag, i):
+            if stack:
+                stack.pop()
+                if not stack and start is not None:
+                    blocks.append(text[start:i])
+                    start = None
+            i += len(end_tag)
+        else:
+            i += 1
+    return blocks
+
+def extract_first_top_level_block(text: str, tag: str):
+    blocks = extract_top_level_blocks(text, tag)
+    return blocks[0] if blocks else None
+
+def strip_nested_blocks(text: str, tag: str) -> str:
+    """Remove all nested <tag>...</tag> blocks from text, leaving only the top-level text."""
+    result = ''
+    start_tag = f'<{tag}>'
+    end_tag = f'</{tag}>'
+    stack = []
+    i = 0
+    last = 0
+    while i < len(text):
+        if text.startswith(start_tag, i):
+            if not stack:
+                result += text[last:i]
+            stack.append(i)
+            i += len(start_tag)
+        elif text.startswith(end_tag, i):
+            if stack:
+                stack.pop()
+                if not stack:
+                    last = i + len(end_tag)
+            i += len(end_tag)
+        else:
+            i += 1
+    if not stack:
+        result += text[last:]
+    return result.strip()
+
+def extract_reasoning_and_remainder(text: str):
+    """Extract reasoning and the remainder of the text after reasoning block (if closed). Strip whitespace only if properly closed."""
+    start_tag = '<reasoning>'
+    end_tag = '</reasoning>'
+    start = text.find(start_tag)
+    if start == -1:
+        return '', text
+    start += len(start_tag)
+    end = text.find(end_tag, start)
+    if end == -1:
+        # If not properly closed, don't strip whitespace to preserve original formatting
+        return text[start:], ''
+    return text[start:end].strip(), text[end+len(end_tag):]
+
 def extract_xml_like_data(text: str) -> Dict[str, Any]:
     """
     Extract thinking content and improved variables from text containing XML-like tags.
 
     Args:
-        text (str): Text containing <think> and <improved_variable> tags
+        text (str): Text containing <reasoning> and <variable> tags
 
     Returns:
         Dict containing:
@@ -83,44 +152,29 @@ def extract_xml_like_data(text: str) -> Dict[str, Any]:
         'variables': {}
     }
 
-    # Extract thinking content
-    think_pattern = r'<reasoning>(.*?)</reasoning>'
-    think_match = re.search(think_pattern, text, re.DOTALL)
-    if think_match:
-        result['reasoning'] = think_match.group(1).strip()
+    # Extract reasoning and the remainder of the text
+    reasoning, remainder = extract_reasoning_and_remainder(text)
+    result['reasoning'] = reasoning
 
-    # Extract improved variables
-    # Find all improved_variable blocks
-    var_pattern = r'<variable>(.*?)</variable>'
-    var_matches = re.findall(var_pattern, text, re.DOTALL)
-
-    for var_content in var_matches:
-        # Extract name
-        name_pattern = r'<name>(.*?)</name>'
-        name_match = re.search(name_pattern, var_content, re.DOTALL)
-
-        # Extract value
-        value_pattern = r'<value>(.*?)</value>'
-        value_match = re.search(value_pattern, var_content, re.DOTALL)
-
-        if name_match and value_match:
-            var_name = name_match.group(1).strip()
-            var_value = value_match.group(1).strip()
-
-            if var_name:  # Only add if name is not empty
+    # Only parse variables from the remainder (i.e., after a closed reasoning tag)
+    variable_blocks = extract_top_level_blocks(remainder, 'variable')
+    for var_block in variable_blocks:
+        name_block = extract_first_top_level_block(var_block, 'name')
+        value_block = extract_first_top_level_block(var_block, 'value')
+        # Only add if both name and value tags are present and name is non-empty after stripping
+        if name_block is not None and value_block is not None:
+            var_name = strip_nested_blocks(name_block, 'name').strip()
+            var_value = value_block.strip() if value_block is not None else ''
+            if var_name:  # Only require name to be non-empty, value can be empty
                 result['variables'][var_name] = var_value
-
     return result
+
 
 # TODO: solution1 -> solution2 -> solution3
 # TODO: param(solution) optimzer.step(solution, "reward is 1, maximize1) -> solution 2
 # TODO: maybe have a trace.train() # simpler even than Algorithm, and cover 80% of use cases
 
 class OptoPrimeV2(OptoPrime):
-    # TODO: 1. merge variable and constraint (DONE)
-    # TODO: 2. Compact representation: some node is very long to describe in text, show a truncated version (long list of data)
-    # TODO: if the node displaying, if the string description is too long, we should have a limit on character we send to LLM, display truncated format
-    # TODO: (a flag to set it)
     # TODO: LLM has the option to check the value of truncated one
     # TODO: turn into a conversation round
     # TODO: and show in a separate message
