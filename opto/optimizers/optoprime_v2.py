@@ -28,28 +28,28 @@ class ProblemInstance:
 
     problem_template = dedent(
         """
-        #Instruction
+        # Instruction
         {instruction}
 
-        #Code
+        # Code
         {code}
 
-        #Documentation
+        # Documentation
         {documentation}
 
-        #Variables
+        # Variables
         {variables}
 
-        #Inputs
+        # Inputs
         {inputs}
 
-        #Others
+        # Others
         {others}
 
-        #Outputs
+        # Outputs
         {outputs}
 
-        #Feedback
+        # Feedback
         {feedback}
         """
     )
@@ -65,8 +65,6 @@ class ProblemInstance:
             others=self.others,
             feedback=self.feedback,
         )
-
-
 
 def extract_xml_like_data(text: str) -> Dict[str, Any]:
     """
@@ -93,7 +91,7 @@ def extract_xml_like_data(text: str) -> Dict[str, Any]:
 
     # Extract improved variables
     # Find all improved_variable blocks
-    var_pattern = r'<improved_variable>(.*?)</improved_variable>'
+    var_pattern = r'<variable>(.*?)</variable>'
     var_matches = re.findall(var_pattern, text, re.DOTALL)
 
     for var_content in var_matches:
@@ -158,25 +156,18 @@ class OptoPrimeV2(OptoPrime):
         - #Outputs: the result of the code output.
         - #Feedback: the feedback about the code's execution result.
 
-        In #Variables, #Inputs, #Outputs, and #Others, the format is:
+        In `#Variables`, `#Inputs`, `#Outputs`, and `#Others`, the format is:
 
-        For primitive variables (int, float, list, etc.), we express as this:
-        <node>
-            (data_type) variable_name = value 
-            <constraint>constraint_expression</constraint>
+        For variables we express as this:
+        <node name="variable_name" type="data_type">
+        <value>
+        value
+        </value>
+        <constraint>
+        constraint_expression
+        </constraint>
         </node>
         
-        For functions or code variables, we express as this:
-        <node>
-            <meta>(data_type) variable_name</meta> 
-            <value>
-                value
-            </value>
-            <constraint>
-                constraint_expression
-            </constraint>
-        </node>
-
         If `(data_type)` is `code`, it means `{value}` is the source code of a python code, which may include docstring and definitions.
         """
     )
@@ -193,24 +184,24 @@ class OptoPrimeV2(OptoPrime):
         Your reasoning on why you made the decision to suggest a new value. You can also use it to explain why you didn't want to change it.
         </reasoning>
         
-        <improved_variable>
-            <name>variable_1_name</name>
-            <value>
-                new_value
-                ...
-            </value>
-        </improved_variable>
+        <variable>
+        <name>variable_1_name</name>
+        <value>
+        new_value
+        ...
+        </value>
+        </variable>
         
-        <improved_variable>
-            <name>variable_2_name</name>
-            <value>
-                new_value
-                ...
-            </value>
-        </improved_variable>
+        <variable>
+        <name>variable_2_name</name>
+        <value>
+        new_value
+        ...
+        </value>
+        </variable>
         ```
 
-        In <think>, explain the problem: 1. what the #Instruction means 2. what the #Feedback on #Output means to #Variables considering how #Variables are used in #Code and other values in #Documentation, #Inputs, #Others. 3. Reasoning about the suggested changes in #Variables (if needed) and the expected result.
+        In <reasoning>, explain the problem: 1. what the #Instruction means 2. what the #Feedback on #Output means to #Variables considering how #Variables are used in #Code and other values in #Documentation, #Inputs, #Others. 3. Reasoning about the suggested changes in #Variables (if needed) and the expected result.
 
         If you need to suggest a change in the values of #Variables, write down the suggested values in <improved_variable>. Remember you can change only the values in #Variables, not others. When <type> of a variable is (code), you should write the new definition in the format of python code without syntax errors, and you should not change the function name or the function signature.
 
@@ -266,14 +257,14 @@ class OptoPrimeV2(OptoPrime):
     # TODO: add an option to replace XML tags if needed by user
 
     default_prompt_symbols = {
-        "variables": "#Variables",
-        "inputs": "#Inputs",
-        "outputs": "#Outputs",
-        "others": "#Others",
-        "feedback": "#Feedback",
-        "instruction": "#Instruction",
-        "code": "#Code",
-        "documentation": "#Documentation",
+        "variables": "# Variables",
+        "inputs": "# Inputs",
+        "outputs": "# Outputs",
+        "others": "# Others",
+        "feedback": "# Feedback",
+        "instruction": "# Instruction",
+        "code": "# Code",
+        "documentation": "# Documentation",
     }
 
     def __init__(
@@ -296,26 +287,15 @@ class OptoPrimeV2(OptoPrime):
         self.ignore_extraction_error = ignore_extraction_error
         self.llm = llm or LLM()
         self.objective = objective or self.default_objective
-        """
-        <node>
-            <meta>(data_type) variable_name</meta> 
-            <value>
-                value
-            </value>
-            <constraint>
-                constraint_expression
-            </constraint>
-        </node>
-        """
         self.example_problem = ProblemInstance.problem_template.format(
             instruction=self.default_objective,
             code="y = add(x=a,y=b)\nz = subtract(x=y, y=c)",
             documentation="add: add x and y \nsubtract: subtract y from x",
-            variables="<node>\n(int) a = 5\n</node>",
-            constraints="a: a > 0",
-            outputs="<node>\n(int) z = 1\n</node>",
-            others="<node>\n(int) y = 6\n</node>",
-            inputs="<node>\n(int) b = 1\n</node>\n<node>\n(int) c = 5\n</node>",
+            variables="""<variable name="a" type="int">\n<value>\n5\n</value>\n<constraint>\na: a > 0\n</constraint>\n</variable>""",
+            # constraints="a: a > 0",
+            outputs="""<node name="z" type="int">\n<value>\n1\n</value>\n</node>""",
+            others="""<node name="y" type="int">\n<value>\n6\n</value>\n</node>""",
+            inputs="""<node name="b" type="int">\n<value>\n1\n</value>\n</node>\n<node name="c" type="int">\n<value>\n5\n</value>\n</node>""",
             feedback="The result of the code is not as expected. The result should be 10, but the code returns 1",
             stepsize=1,
         )
@@ -325,12 +305,12 @@ class OptoPrimeV2(OptoPrime):
             In this case, the desired response would be to change the value of input a to 14, as that would make the code return 10.
             </reasoning>
             
-            <improved_variable>
-                <name>a</name>
-                <value>
-                    10
-                </value>
-            </improved_variable>
+            <variable>
+            <name>a</name>
+            <value>
+            10
+            </value>
+            </variable>
             """
         )
         self.output_format_prompt = self.output_format_prompt_template
@@ -351,30 +331,33 @@ class OptoPrimeV2(OptoPrime):
         for k, v in node_dict.items():
             if "__code" not in k:
                 constraint_expr = f"<constraint> ({type(v[0]).__name__}) {k}: {v[1]} </constraint>"
-                temp_list.append(f"<node>\n({type(v[0]).__name__}) {k}={v[0]}\n{constraint_expr}\n</node>\n")
+                temp_list.append(f"<node name=\"{k}\" type=\"{type(v[0]).__name__}\">\n<value>{v[0]}</value>\n{constraint_expr}\n</node>\n")
             else:
-                constraint_expr = f"<constraint>\n(code) {k}: {v[1]}\n</constraint>"
-                temp_list.append(f"<node>\n<meta>(code) {k}</meta>\n<value>\n{v[0]}\n</value>\n{constraint_expr}\n</node>\n")
+                constraint_expr = f"<constraint>\n{v[1]}\n</constraint>"
+                temp_list.append(f"<node name=\"{k}\" type=\"code\">\n<value>\n{v[0]}\n</value>\n{constraint_expr}\n</node>\n")
         return "\n".join(temp_list)
 
-    def repr_node_value_compact(self, node_dict):
+    def repr_node_value_compact(self, node_dict, xml_root_tag="node"):
         temp_list = []
         for k, v in node_dict.items():
             if "__code" not in k:
-                constraint_expr = f"<constraint> ({type(v[0]).__name__}) {k}: {v[1]} </constraint>"
-                # https://stackoverflow.com/questions/1436703/what-is-the-difference-between-str-and-repr
-                # node_value = str(v[0])[:self.initial_var_char_limit]
                 node_value = self.truncate_expression(v[0], self.initial_var_char_limit)
-                temp_list.append(f"<node>\n({type(v[0]).__name__}) {k}={node_value}\n{constraint_expr}\n</node>\n")
+                if v[1] is not None:
+                    constraint_expr = f"<constraint>\n{v[1]}\n</constraint>"
+                    temp_list.append(f"<{xml_root_tag} name=\"{k}\" type=\"{type(v[0]).__name__}\">\n<value>\n{node_value}\n</value>\n{constraint_expr}\n</{xml_root_tag}>\n")
+                else:
+                    temp_list.append(f"<{xml_root_tag} name=\"{k}\" type=\"{type(v[0]).__name__}\">\n<value>\n{node_value}\n</value>\n</{xml_root_tag}>\n")
             else:
-                constraint_expr = f"<constraint>\n(code) {k}: {v[1]}\n</constraint>"
-                # node_value = str(v[0])[:self.initial_var_char_limit]
-                node_value = self.truncate_expression(v[0], self.initial_var_char_limit)
-                temp_list.append(
-                    f"<node>\n<meta>(code) {k}</meta>\n<value>\n{node_value}\n</value>\n{constraint_expr}\n</node>\n")
+                constraint_expr = f"<constraint>\n{v[1]}\n</constraint>"
+                # we only truncate the function body
+                signature = v[1].replace("The code should start with:\n", "")
+                func_body = v[0].replace(signature, "")
+                node_value = self.truncate_expression(func_body, self.initial_var_char_limit)
+                temp_list.append(f"<{xml_root_tag} name=\"{k}\" type=\"code\">\n<value>\n{signature}{node_value}\n</value>\n{constraint_expr}\n</{xml_root_tag}>\n")
         return "\n".join(temp_list)
 
     def truncate_expression(self, value, limit):
+        # https://stackoverflow.com/questions/1436703/what-is-the-difference-between-str-and-repr
         value = str(value)
         if len(value) > limit:
             return value[:limit] + "...(skipped due to length limit)"
@@ -443,7 +426,7 @@ class OptoPrimeV2(OptoPrime):
                 else ""
             ),
             variables=(
-                self.repr_node_value_compact(summary.variables)
+                self.repr_node_value_compact(summary.variables, xml_root_tag="variable")
                 if "#Variables" not in mask
                 else ""
             ),
