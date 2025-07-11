@@ -120,63 +120,12 @@ def extract_xml_like_data(text: str, reasoning_tag: str = "reasoning",
         value_block = extract_first_top_level_block(var_block, value_tag)
         # Only add if both name and value tags are present and name is non-empty after stripping
         if name_block is not None and value_block is not None:
-            var_name = strip_nested_blocks(name_block, name_tag).strip()
+            var_name = name_block.strip()
             var_value = value_block.strip() if value_block is not None else ''
             if var_name:  # Only require name to be non-empty, value can be empty
                 result['variables'][var_name] = var_value
     return result
 
-
-@dataclass
-class ProblemInstance:
-    instruction: str
-    code: str
-    documentation: str
-    variables: str
-    inputs: str
-    others: str
-    outputs: str
-    feedback: str
-
-    problem_template = dedent(
-        """
-        # Instruction
-        {instruction}
-
-        # Code
-        {code}
-
-        # Documentation
-        {documentation}
-
-        # Variables
-        {variables}
-
-        # Inputs
-        {inputs}
-
-        # Others
-        {others}
-
-        # Outputs
-        {outputs}
-
-        # Feedback
-        {feedback}
-        """
-    )
-
-    def __repr__(self) -> str:
-        return self.problem_template.format(
-            instruction=self.instruction,
-            code=self.code,
-            documentation=self.documentation,
-            variables=self.variables,
-            inputs=self.inputs,
-            outputs=self.outputs,
-            others=self.others,
-            feedback=self.feedback,
-        )
 
 
 class OptimizerPromptSymbolSet:
@@ -225,6 +174,19 @@ class OptimizerPromptSymbolSet:
         else:
             raise NotImplementedError(
                 "If you supplied a custom output format prompt template, you need to implement your own response extractor")
+        
+    @property
+    def default_prompt_symbols(self) -> Dict[str, str]:
+        return {
+            "variables": self.variables_section_title,
+            "inputs": self.inputs_section_title,
+            "outputs": self.outputs_section_title,
+            "others": self.others_section_title,
+            "feedback": self.feedback_section_title,
+            "instruction": self.instruction_section_title,
+            "code": self.code_section_title,
+            "documentation": self.documentation_section_title,
+        }
 
 
 class OptimizerPromptSymbolSet2(OptimizerPromptSymbolSet):
@@ -247,6 +209,77 @@ class OptimizerPromptSymbolSet2(OptimizerPromptSymbolSet):
     improved_variable_tag = "var"
     name_tag = "name"
     value_tag = "data"
+
+
+@dataclass
+class ProblemInstance:
+    instruction: str
+    code: str
+    documentation: str
+    variables: str
+    inputs: str
+    others: str
+    outputs: str
+    feedback: str
+
+    optimizer_prompt_symbol_set: OptimizerPromptSymbolSet
+
+    problem_template = dedent(
+        """
+        # Instruction
+        {instruction}
+
+        # Code
+        {code}
+
+        # Documentation
+        {documentation}
+
+        # Variables
+        {variables}
+
+        # Inputs
+        {inputs}
+
+        # Others
+        {others}
+
+        # Outputs
+        {outputs}
+
+        # Feedback
+        {feedback}
+        """
+    )
+
+    def __repr__(self) -> str:
+        return self.replace_symbols(self.problem_template.format(
+            instruction=self.instruction,
+            code=self.code,
+            documentation=self.documentation,
+            variables=self.variables,
+            inputs=self.inputs,
+            outputs=self.outputs,
+            others=self.others,
+            feedback=self.feedback,
+        ), self.optimizer_prompt_symbol_set.default_prompt_symbols)
+    
+    def replace_symbols(self, text: str, symbols: Dict[str, str]) -> str:
+        default_prompt_symbols = {
+            "variables": "# Variables",
+            "constraints": "# Constraints",
+            "inputs": "# Inputs",
+            "outputs": "# Outputs",
+            "others": "# Others",
+            "feedback": "# Feedback",
+            "instruction": "# Instruction",
+            "code": "# Code",
+            "documentation": "# Documentation",
+        }
+            
+        for k, v in symbols.items():
+            text = text.replace(default_prompt_symbols[k], v)
+        return text
 
 
 # TODO: solution1 -> solution2 -> solution3
@@ -413,16 +446,7 @@ class OptoPrimeV2(OptoPrime):
         self.summary_log = [] if log else None
         self.memory = FIFOBuffer(memory_size)
 
-        self.default_prompt_symbols = {
-            "variables": self.optimizer_prompt_symbol_set.variables_section_title,
-            "inputs": self.optimizer_prompt_symbol_set.inputs_section_title,
-            "outputs": self.optimizer_prompt_symbol_set.outputs_section_title,
-            "others": self.optimizer_prompt_symbol_set.others_section_title,
-            "feedback": self.optimizer_prompt_symbol_set.feedback_section_title,
-            "instruction": self.optimizer_prompt_symbol_set.instruction_section_title,
-            "code": self.optimizer_prompt_symbol_set.code_section_title,
-            "documentation": self.optimizer_prompt_symbol_set.documentation_section_title,
-        }
+        self.default_prompt_symbols = self.optimizer_prompt_symbol_set.default_prompt_symbols
 
         self.prompt_symbols = copy.deepcopy(self.default_prompt_symbols)
         self.initialize_prompt()

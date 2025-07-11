@@ -30,6 +30,7 @@ from opto.optimizers.optoprime_v2 import extract_xml_like_data
 - No reasoning/variable tags scenarios
 """
 
+
 class TestXMLParsing(unittest.TestCase):
     
     def test_basic_parsing(self):
@@ -104,7 +105,7 @@ class TestXMLParsing(unittest.TestCase):
         expected = {
             'reasoning': 'Reasoning here',
             'variables': {
-                'outer_name': 'some_value'
+                '<name>inner_name</name>\n        outer_name': 'some_value'
             }
         }
         self.assertEqual(result, expected)
