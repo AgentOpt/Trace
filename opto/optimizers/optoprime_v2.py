@@ -157,7 +157,6 @@ class OptimizerPromptSymbolSet:
     reasoning_tag = "reasoning"
     improved_variable_tag = "variable"
     name_tag = "name"
-    value_tag = "value"
 
     # custom output format (this will give the highest degree of freedom)
     # once it's set, it will override the default output format
@@ -651,7 +650,8 @@ class OptoPrimeV2(OptoPrime):
             return {}
 
         suggestion = self.extract_llm_suggestion(response)
-        update_dict = self.construct_update_dict(suggestion)
+        update_dict = self.construct_update_dict(suggestion['variables'])
+        # suggestion has two keys: reasoning, and variables
 
         if self.log is not None:
             self.log.append(
