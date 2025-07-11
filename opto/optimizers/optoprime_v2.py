@@ -626,6 +626,7 @@ class OptoPrimeV2(OptoPrime):
                                              constraint_tag=self.optimizer_prompt_symbol_set.constraint_tag) if "#Others" not in mask else ""
             ),
             feedback=summary.user_feedback if "#Feedback" not in mask else "",
+            optimizer_prompt_symbol_set=self.optimizer_prompt_symbol_set
         )
 
     def _step(
