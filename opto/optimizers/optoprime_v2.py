@@ -567,7 +567,8 @@ class OptoPrimeV2(OptoPrime):
 
         # Add examples
         if len(self.memory) > 0:
-            prefix = user_prompt.split(self.final_prompt)[0]
+            formatted_final = self.final_prompt.format(names=var_names)
+            prefix = user_prompt.split(formatted_final)[0]
             examples = []
             for variables, feedback in self.memory:
                 examples.append(
@@ -583,7 +584,7 @@ class OptoPrimeV2(OptoPrime):
             user_prompt = (
                     prefix
                     + f"\nBelow are some variables and their feedbacks you received in the past.\n\n{examples}\n\n"
-                    + self.final_prompt
+                    + formatted_final
             )
         self.memory.add((summary.variables, summary.user_feedback))
 
