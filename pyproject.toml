@@ -11,7 +11,6 @@ authors = [
   {name = "Adith Swaminathan", email = "adith387@gmail.com"},
 ]
 license="MIT"
-license-files=["LICEN[CS]E*"]
 requires-python = ">= 3.9"
 dynamic = ["version", "dependencies", "description"]
 readme = "README.md"
@@ -30,3 +29,6 @@ autogen = ["autogen-agentchat==0.2.40"]
 Homepage = "https://microsoft.github.io/Trace/"
 Documentation = "https://microsoft.github.io/Trace/intro.html"
 Repository = "https://github.com/microsoft/Trace.git"
+
+[tool.setuptools]
+license-files = ["LICEN[CS]E*"]
