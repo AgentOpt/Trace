@@ -9,7 +9,14 @@ from opto.utils.llm import LLM
 def test_deepcopy_plain_node():
     x = trace.node("x")
     # should not raise
-    copy.deepcopy(x)
+    y = copy.deepcopy(x)
+
+    assert y.name == x.py_name + '_copy:0'
+
+    z = copy.deepcopy(y)
+
+    assert z.name == y.py_name + '_copy:0'
+
 
 
 def test_deepcopy_fun_parameter():
