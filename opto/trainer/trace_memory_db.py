@@ -7,6 +7,7 @@ import math
 import copy
 import uuid
 from datetime import datetime
+import heapq
 from typing import Dict, List, Optional, Any, Union
 
 import socket
@@ -16,9 +17,18 @@ class TraceMemoryDB:
 
     # ─── Set of allowed data‐keys ─────────────────────────────
     CANONICAL_DATA_TYPES = {
-        "goal","prompt","code","diff_patch","graph_nodes","score","scores",
-        "feedback","error","validation_result","hypothesis","observation",
-        "checkpoint","context","variables"
+        "objective", # default_objective or custom_prompt for the given optimization/problem (i.e. managed by Optimizers class instance)
+        "variables","constraints","inputs","outputs","others","feedback","instruction","code","documentation","user_prompt", # typical data used by OptoPrime's prompt
+        "reasoning","suggestion","answer", # typical data used by OptoPrime's response
+        "candidates", # list of candidate answers each as dict {id:, candidate:, optional embedding:, scores:, feedback:} => each candidate should be stored separately (OptoPrimeMulti => will allow to simply backtrack and branch)
+        "candidate",  # individual candidate string output selected
+        "graph",
+        "score", "scores", # Guide's score or a dict of scores / "feedback" is already listed in typical data from optimizer's prompt
+        "diff_patch","error","validation_result", # if automatic validation/correction are used, also if we want to capture errors with context
+        "hypothesis", # from reasoning analysis for future hypothesis exploration (could be stored as a list of tuples with embeddings or ID linkin to an external vector db for faster search into hypothesis?)
+        "checkpoint", # to save state of the optimization problem instance to allow backtracking/branching
+        "context",
+        "process_state", # to store the state of the process for handing over to another process or for resuming later
     }
 
     # --------------------------------------------------------------------- #
@@ -28,8 +38,7 @@ class TraceMemoryDB:
                  cache_size: int = 1000, auto_vector_db: bool = False):
         """
         Args:
-            vector_db: existing UnifiedVectorDB instance or *None* for
-                       in‑memory‑only operation (R3).
+            vector_db: existing UnifiedVectorDB instance or *None* for in‑memory‑only operation (R3).
             cache_size: number of recent records held in RAM (hot cache).
         """
         # Minimal‑footprint default: keep vdb = None unless the caller
@@ -44,25 +53,39 @@ class TraceMemoryDB:
 
         self._store: List[Dict[str, Any]] = []     # immutable append‑only log
         self._hot_cache: Dict[str, Dict[str, Any]] = {}
-        self._cache_order: List[str] = []
+        self._cache_heap: List[tuple[float, str]] = []
         self._cache_size = int(cache_size)
+
+    def __len__(self) -> int:
+        """Return the total number of records stored."""
+        return len(self._store)
+    
+    def __iter__(self):
+        """Iterate over all stored records."""
+        for record in self._store:
+            yield record
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        """Retrieve a specific record by index."""
+        return self._store[index]
 
     # --------------------------------------------------------------------- #
     # Public logging / retrieval API                                        #
     # --------------------------------------------------------------------- #
     def log_data(
         self,
-        goal_id: str,
+        problem_id: str,
         step_id: int,
         data: Dict[str, Any],
         *,
         data_payload: Optional[str] = None,
         candidate_id: int = 1,
-        parent_goal_id: Optional[str] = None,
+        parent_problem_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None,
+        embedding: Optional[List[float]] = None, # TODO: handle the possibility to directly pass an embedding vector
         scores: Optional[Dict[str, float]] = None,
         feedback: Optional[str] = None,
+        process_state: Optional[str] = None,
         update_if_exists: bool = False,
         **legacy_aliases,
     ) -> str:
@@ -75,33 +98,64 @@ class TraceMemoryDB:
             data_payload = legacy_aliases.pop("data_key")
         if data_payload is None:
             raise ValueError("`data_payload` (or legacy `data_key`) is required")
-
+        # ── if this is a batch of candidates, unroll it ──
+        if isinstance(data.get("candidates"), list):
+            items = data.pop("candidates")
+            return [
+                self.log_data( problem_id=problem_id, step_id=step_id, data=data, data_payload=data_payload, candidate_id=cand.get("id",i),
+                    parent_problem_id=parent_problem_id, metadata=metadata, embedding=cand.get("embedding"), scores=cand.get("scores"),
+                    feedback=cand.get("feedback"), update_if_exists=update_if_exists,
+                    **legacy_aliases,
+                )
+                for i, cand in enumerate(items)
+            ]
         # ---- (Immutable) ID ------------------------------------------------
-        entry_id = f"{goal_id}_{step_id}_{candidate_id}_{data_payload}_{uuid.uuid4().hex[:6]}"
+        entry_id = f"{problem_id}_{step_id}_{candidate_id}_{data_payload}"
 
         # ---- Build record dict --------------------------------------------
         record = {
             "entry_id": entry_id,
-            "goal_id": goal_id,
-            "step_id": int(step_id),
-            "candidate_id": int(candidate_id),
-            "parent_goal_id": parent_goal_id,
-            "data_payload": data_payload,
             "data": data,
-            "metadata": metadata or {},
-            "embedding": embedding,
+            "embedding": embedding, # TODO: not sustainable, to be fixed
             "scores": scores,
             "feedback": feedback,
         }
-        # timestamp in metadata
-        record["metadata"].setdefault("timestamp", datetime.utcnow().isoformat())
 
+        meta = {
+            "problem_id": problem_id,
+            "step_id": step_id,
+            "candidate_id": candidate_id,
+            "data_payload": data_payload,
+            "process_state": process_state,
+            'timestamp': datetime.utcnow().isoformat(),
+            **(metadata or {}),
+        }
+        if parent_problem_id:
+            meta["parent_problem_id"] = parent_problem_id
+            
+        # ---- Persist to Vector‑DB (if available) --------------------------
+        if self.vdb is not None:
+            self.vdb._add_texts([json.dumps(record)], ids=[entry_id], metadatas=[meta])
+
+        # Merge meta into record for easy access
+        record.update(meta)
+        priority = None
+        # Check for score in data
+        if isinstance(data.get("score"), (int, float)):
+            priority = -float(data["score"])  # Negate for max-heap behavior
+        # Check for scores dict
+        elif (isinstance(scores, dict) and len(scores) > 0) or (isinstance(data.get("scores"), dict) and len(data.get("scores", {})) > 0):
+            # Use first available score
+            priority = -float(next(iter((scores or data["scores"]).values())))
+        # Fallback to timestamp (FIFO)
+        priority = priority if priority is not None else datetime.fromisoformat(meta["timestamp"]).timestamp()
+ 
         # ---- Upsert in process memory -------------------------------------
         if update_if_exists:
             # locate first matching immutable record & overwrite (rare)
             for idx, r in enumerate(self._store):
-                if (r["goal_id"], r["step_id"], r["candidate_id"], r["data_payload"]) == (
-                    goal_id, step_id, candidate_id, data_payload
+                if (r.get("problem_id"), r.get("step_id"), r.get("candidate_id"), r.get("data_payload")) == (
+                    problem_id, step_id, candidate_id, data_payload
                 ):
                     self._store[idx] = record
                     break
@@ -112,21 +166,26 @@ class TraceMemoryDB:
 
         # ---- Hot cache maintenance ----------------------------------------
         self._hot_cache[entry_id] = record
-        self._cache_order.append(entry_id)
-        if len(self._cache_order) > self._cache_size:
-            oldest = self._cache_order.pop(0)
-            self._hot_cache.pop(oldest, None)
 
-        # ---- Persist to Vector‑DB (if available) --------------------------
-        if self.vdb is not None:
-            meta = {
-                "goal_id": goal_id,
-                "step_id": step_id,
-                "candidate_id": candidate_id,
-                "data_payload": data_payload,
-                **(metadata or {}),
-            }
-            self.vdb._add_texts([json.dumps(record)], ids=[entry_id], metadatas=[meta])
+        heapq.heappush(self._cache_heap, (priority, entry_id))
+        
+        # Evict lowest priority entries if cache exceeds size
+        while len(self._hot_cache) > self._cache_size:
+            # Pop entries until we find one still in cache
+            while self._cache_heap:
+                _, evict_id = heapq.heappop(self._cache_heap)
+                if evict_id in self._hot_cache:
+                    self._hot_cache.pop(evict_id)
+                    break
+
+        # Evict oldest entries if cache exceeds size
+        while len(self._hot_cache) > self._cache_size:
+            # Pop entries until we find one still in cache
+            while self._cache_heap:
+                _, oldest_id = heapq.heappop(self._cache_heap)
+                if oldest_id in self._hot_cache:
+                    self._hot_cache.pop(oldest_id)
+                    break
 
         return entry_id
 
@@ -134,13 +193,13 @@ class TraceMemoryDB:
     def get_data(
         self,
         *,
-        goal_id: Optional[str] = None,
+        problem_id: Optional[str] = None,
         step_id: Optional[int] = None,
         data_type: Optional[str] = None,
         data_payload: Optional[str] = None,  # alias for backward-compat
         candidate_id: Optional[int] = None,
         entry_id: Optional[str] = None,
-        parent_goal_id: Optional[str] = None,
+        parent_problem_id: Optional[str] = None,
         last_n: Optional[int] = None,
         additional_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
@@ -155,20 +214,20 @@ class TraceMemoryDB:
         rand_n = additional_filters.pop("random", None)
 
         def _match(rec: Dict[str, Any]) -> bool:
-            if goal_id is not None and rec["goal_id"] != goal_id:
+            if problem_id is not None and rec.get("problem_id") != problem_id:
                 return False
-            if step_id is not None and rec["step_id"] != step_id:
+            if step_id is not None and rec.get("step_id") != step_id:
                 return False
             if data_type is not None and rec.get("data_payload") != data_type:
                 return False
-            if candidate_id is not None and rec["candidate_id"] != candidate_id:
+            if candidate_id is not None and rec.get("candidate_id") != candidate_id:
                 return False
-            if parent_goal_id is not None and rec["parent_goal_id"] != parent_goal_id:
+            if parent_problem_id is not None and rec.get("parent_problem_id") != parent_problem_id:
                 return False
             # nested path look‑ups, e.g. "metadata.agent"
             for key, expected in additional_filters.items():
-                # Special case: if filtering by parent_goal_id in metadata but record has it as top-level
-                if key == "metadata.parent_goal_id" and rec.get("parent_goal_id") == expected:
+                # Special case: if filtering by parent_problem_id in metadata but record has it as top-level
+                if key == "metadata.parent_problem_id" and rec.get("parent_problem_id") == expected:
                     continue  # This filter matches, continue to check other filters
                 path = key.split(".")
                 cur = rec
@@ -199,73 +258,63 @@ class TraceMemoryDB:
         return hits[: last_n] if last_n else hits
 
     # ..................................................................... #
-    def get_last_n(self, goal_id: str, data_type: str, n: int) -> List[Dict]:
+    def get_last_n(self, n: int, problem_id: str = None, data_type: str = None, data_payload: str = None) -> List[Dict]:
         """Return newest N records for that goal / payload."""
-        return self.get_data(goal_id=goal_id, data_type=data_type, last_n=n)
+        return self.get_data(problem_id=problem_id, data_type=data_type, data_payload=data_payload, last_n=n)
 
-    def get_candidates(self, goal_id: str, step_id: int) -> List[Dict]:
+    def get_candidates(self, problem_id: str, step_id: int) -> List[Dict]:
         """All candidate entries at this (goal, step)."""
-        return self.get_data(goal_id=goal_id, step_id=step_id)
-
-    def get_best_candidate(self, goal_id: str, step_id: int, score_name: str = "score") -> Optional[Dict]:
-        """Return candidate with highest <score_name> inside .scores."""
-        candidates = self.get_candidates(goal_id, step_id)
-        scored: List[tuple[float,dict]] = []
-        for c in candidates:
-            # look for either data["scores"] or data["score"]
-            d = c["data"]
-            val = None
-            if isinstance(d.get("scores"), dict):
-                val = d["scores"].get(score_name)
-            elif isinstance(d.get("score"), (int, float)):
-                val = d["score"]
-            if isinstance(val, (int, float)):
-                scored.append((val, c))
-        if not scored:
-            return None
-        _, best_rec = max(scored, key=lambda x: x[0])
-        return best_rec
+        return self.get_data(problem_id=problem_id, step_id=step_id)
 
     # ------------------------------------------------------------------ #
     #  Ranked / stochastic / diversity helpers  (R13 & R18)
     # ------------------------------------------------------------------ #
     def get_top_candidates(
-        self, goal_id: str, step_id: int, score_name: str = "score", n: int = 3
+        self, problem_id: str, step_id: int = None, score_name: str = None, score_fn = None, n: int = 3
     ) -> List[Dict]:
         """Return Top‑N candidates by descending <score_name> (R13)."""
-        cands = self.get_candidates(goal_id, step_id)
-        scored: List[tuple[float,dict]] = []
-        for c in cands:
-            d = c["data"]
-            val = None
-            if isinstance(d.get("scores"), dict):
-                val = d["scores"].get(score_name)
-            elif isinstance(d.get("score"), (int, float)):
-                val = d["score"]
-            if isinstance(val, (int, float)):
-                scored.append((val, c))
-        scored.sort(key=lambda t: t[0], reverse=True)
-        return [copy.deepcopy(c) for _, c in scored[:n]]
+        # fast‐path: if no score_name and no custom score_fn, use cache heap directly
+        if score_name is None and score_fn is None:
+            # cache heap stores (priority, entry_id) where lower priority == higher score
+            top = heapq.nsmallest(n, self._cache_heap)
+            return [
+                copy.deepcopy(self._hot_cache[eid])
+                for _, eid in top
+                if eid in self._hot_cache
+            ]
+        cands = self.get_candidates(problem_id, step_id)
+        # choose ranking key: custom fn > named score > direct .score
+        if score_fn is not None:
+            key_fn = lambda c: score_fn(c["data"])
+        elif score_name:
+            key_fn = lambda c: c["data"].get("scores", c.get("scores", {})).get(score_name, c["data"].get("score"))
+        else:
+            key_fn = lambda c: c["data"].get("score")
+        # filter out non-numeric scores
+        valid = [c for c in cands if isinstance(key_fn(c), (int, float))]
+        # fast top-N selection
+        top_n = heapq.nlargest(n, valid, key=key_fn)
+        return [copy.deepcopy(c) for c in top_n]
 
-    def get_random_candidates(self, goal_id: str, step_id: int, n: int = 1) -> List[Dict]:
+    def get_random_candidates(self, problem_id: str, step_id: int, n: int = 1) -> List[Dict]:
         """Return a random sample of candidates (R13)."""
-        cands = self.get_candidates(goal_id, step_id)
+        cands = self.get_candidates(problem_id, step_id)
         if not cands:
             return []
         return random.sample(cands, min(n, len(cands)))
 
     def get_most_diverse_candidates(
-        self, goal_id: str, step_id: int, n: int = 3
+        self, problem_id: str, step_id: int, n: int = 3
     ) -> List[Dict]:
         """
         Simple farthest‑first traversal using candidate embeddings.
         Falls back to random if embeddings are unavailable.  (R18)
         """
-        candidates = self.get_candidates(goal_id, step_id)
+        candidates = self.get_candidates(problem_id, step_id)
         # Keep only those with an embedding vector
         emb_cands = [(c, c.get("embedding")) for c in candidates if isinstance(c.get("embedding"), list)]
         if len(emb_cands) < n:
-            return self.get_random_candidates(goal_id, step_id, n)
+            return self.get_random_candidates(problem_id, step_id, n)
 
         def _dist(a, b):
             return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
@@ -285,7 +334,10 @@ class TraceMemoryDB:
                 min_d = min(_dist(emb, emb_cands[s][1]) for s in selected)
                 if min_d > best:
                     best, best_idx = min_d, idx
-            selected.append(best_idx)
+            if best_idx is not None:
+                selected.append(best_idx)
+            else:
+                break  # No more candidates to select
 
         return [copy.deepcopy(emb_cands[i][0]) for i in selected]
 
@@ -300,6 +352,35 @@ class TraceMemoryDB:
             except Exception:  # pragma: no cover
                 pass
         return True
+
+    # ..................................................................... #
+    #  Check‑point helpers –  tag + serialise
+    # ..................................................................... #
+    def save_checkpoint(
+        self, problem_id: str, step_id: int, *, file_path: str, label: str | None = None
+    ):
+        """
+        Serialise all records for (goal, step) – *including* leaf parameters –
+        and additionally **log** a 'checkpoint' entry so Trace’s downstream
+        optimisers can find it later.
+        """
+        rows = self.vdb.query_records(problem_id=problem_id, step_id=step_id)
+        with open(file_path, "w") as fh:
+            json.dump(rows, fh, indent=2)
+
+        self.log_data(
+            problem_id=problem_id,
+            step_id=step_id,
+            data={"file": file_path},
+            data_payload="checkpoint",
+            metadata={"label": label or f"ckpt@{step_id}"}
+        )
+
+    def load_checkpoint(self, file_path: str, *, new_problem_id: str | None = None):
+        rows = json.load(open(file_path))
+        for r in rows:
+            r["problem_id"] = new_problem_id or r["problem_id"]
+            self.vdb.insert_record(r)
 
 # -------------------------------------------------------
 # Raw VectorDB interface
@@ -683,118 +764,108 @@ class UnifiedVectorDB:
             self.logger.info(f"Deleted {response['deleted']} documents from index {self.config.collection_name}")
             time.sleep(2)
 
-    # ─── New method: log_agent_data ────────────────────────────────────────────────
-    def log_agent_data(
-        self,
-        agent_name: str,
-        data_key: str,
-        data_value: Any,
-        function_name: Optional[str] = None,
-        task_id: bool = False,
-        before_after: Optional[str] = None,
-        user_id: Optional[str] = None,
-        step_id: Optional[int] = None,
-        task_type: Optional[str] = None,
-        score: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> None:
+    # ───────────────────────── Few‑shot helpers (moved from HumanLLMConfig) ──
+    def populate_few_shot_tags(self, prompt: str) -> str:
         """
-        Store agent‐specific data as a new document in the vector DB.  Serializes data_value to JSON,
-        builds a metadata dict (including agent_name, data_key, and any provided tags), and then calls add_texts().
+        Expand every `few_shots:{…}` tag found in *prompt* by calling
+        :py:meth:`get_few_shot_examples`.  The tag (including its JSON payload)
+        is replaced by the generated examples.
         """
-        # (1) Serialize the payload
-        if isinstance(data_value, dict):
-            serialized_data = json.dumps(data_value)
-        else:
-            # wrap primitive or list under a key of data_key
-            serialized_data = json.dumps({data_key: data_value})
+        if not prompt:
+            return ""
 
-        # (2) Optionally generate an task_id UUID
-        task_id = str(uuid.uuid4()) if task_id else None
-
-        # (3) Build metadata tags
-        tags: Dict[str, Any] = metadata.copy() if isinstance(metadata, dict) else {}
-        params = {"agent_name": agent_name, "data_key": data_key, "function_name":function_name, "task_id": task_id, "before_after": before_after, "user_id": user_id, "step_id": step_id, "task_type": task_type, "score": score}
-        # filter out any that are None
-        for key, val in params.items():
-            if val is not None:
-                tags[key] = val
-        # Always tag with a timestamp
-        tags["date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-
-        # (4) Delegate to add_texts()
-        # Note: Chroma / Elasticsearch both accept `metadatas=[{…}]`.
-        self._add_texts(texts=[serialized_data], metadatas=[tags])
-
-
-    # ─── New method: get_agent_data ────────────────────────────────────────────────
-    def get_agent_data(
-        self,
-        agent_name: Optional[str] = None,
-        data_key: Optional[str] = None,
-        task_id: Optional[str] = None,
-        function_name: Optional[str] = None,
-        before_after: Optional[str] = None,
-        user_id: Optional[str] = None,
-        step_id: Optional[int] = None,
-        task_type: Optional[str] = None,
-        score: Optional[float] = None,
-        metadata_filter: Optional[Dict[str, Any]] = None,
-        sort_order: Optional[str] = None,
-        k: int = 5,
-        start_index: int = 0,
-        end_index: Optional[int] = None,
-        query_text: str = "*",
-        new_storage: bool = True
-    ):
-        """
-        Retrieve agent‐specific data from the vector DB.  Builds a metadata dict from all provided parameters,
-        runs a `query(...)` under the hood, then paginates and parses results (JSON‐decoding payloads).
-
-        Returns:
-            parsed_list: list of deserialized payloads (dict or primitive)  
-            raw_list:   list of full `Document`‐like objects returned by the underlying vector store
-        """
-        # (1) Build metadata dict to filter by
-        filters: Dict[str, Any] = {}
-        # params = ["agent_name", "data_key", "function_name", "task_id", "before_after", "user_id", "step_id", "task_type", "score"]
-        # filters.update({k: locals()[k] for k in params if (k in locals()) and (locals()[k] is not None)})
-        params = {"agent_name": agent_name, "data_key": data_key, "function_name":function_name, "task_id": task_id, "before_after": before_after, "user_id": user_id, "step_id": step_id, "task_type": task_type, "score": score}
-        # filter out any that are None
-        for key, val in params.items():
-            if val is not None:
-                filters[key] = val
-
-        # Merge in any explicit metadata_filter
-        if metadata_filter:
-            filters.update(metadata_filter)
-
-        # (2) Determine how many to fetch
-        max_k = end_index if (end_index is not None) else k
-
-        # (3) Query the DB
-        results = self._query( query_text=query_text, k=max_k, metadata_filter=filters, sort_order=sort_order)
-
-        # (4) Apply pagination
-        paginated = (results[start_index:end_index] if end_index is not None else results[start_index:])
-
-        # (5) Parse/deserialize each Document.page_content
-        parsed_list: List[Any] = []
-        for item in paginated:
+        pattern = r"few_shots:\s*\{"
+        for m in reversed(list(re.finditer(pattern, prompt, re.DOTALL))):
+            # Find matching closing brace (manual balance → works for nested {})
+            depth, i = 1, m.end()
+            while depth and i < len(prompt):
+                if prompt[i] == "{":
+                    depth += 1
+                elif prompt[i] == "}":
+                    depth -= 1
+                i += 1
             try:
-                # `item.page_content` may be a JSON string
-                temp = json.loads(item.page_content)
+                criteria_json = json.loads("{" + prompt[m.end():i - 1] + "}")
+            except json.JSONDecodeError:
+                continue  # leave tag untouched if JSON is malformed
+            replacement = self.get_few_shot_examples([criteria_json])
+            prompt = prompt[:m.start()] + replacement + prompt[i:]
+        return prompt
+
+    # ---- public: get a formatted block of examples --------------------------------
+    def get_few_shot_examples(self, criteria_list) -> str:
+        if not criteria_list:
+            return ""
+
+        blocks = []
+        for spec in self._normalize_criteria(criteria_list):
+            src      = spec["sources"]
+            num      = spec["num"]
+            q_text   = spec.get("query_text", "*")
+            m_filter = spec.get("metadata_filter", {})
+
+            docs = self._query(query_text=q_text,
+                               k=num,
+                               metadata_filter=m_filter,
+                               sort_order=spec.get("sort_order"))
+            examples = [{"content": d.page_content, "metadata": d.metadata} for d in docs]
+            blocks.append(self.format_examples(examples, spec, spec.get("separators")))
+        return "\n".join(blocks)
+
+    # ---- helpers few shots -----------------------------------------------------------------
+    def _normalize_criteria(self, lst):
+        """Ensure required keys & defaults."""
+        out = []
+        for c in lst:
+            out.append({
+                "sources":  c.get("sources", "learnt"),
+                "num":      c.get("num", 5),
+                "format":   c.get("format", "Json"),
+                "query_text":        c.get("query_text", "*"),
+                "metadata_filter":   c.get("metadata_filter", {}),
+                "sort_order":        c.get("sort_order"),
+                "similarity_search": c.get("similarity_search", False),
+                "template":          c.get("template"),
+                "separators":        c.get("separators"),
+            })
+        return out
+
+    def format_examples(self,
+                        examples,
+                        criteria,
+                        separators=None) -> str:
+        """Return examples in **Json**, **Markdown** or **Jinja2** format."""
+        if not examples:
+            return ""
+
+        fmt       = criteria.get("format", "Json").lower()
+        template  = criteria.get("template")
+        sep = separators or {
+            "global_prefix": "\n<<",
+            "global_suffix": ">>\n",
+            "item_prefix":   "\n|",
+            "item_suffix":   "|"
+        }
+
+        rendered = []
+        for ex in examples:
+            try:
+                data = json.loads(ex["content"])
             except Exception:
-                # fallback: return the raw page_content
-                temp = item.page_content
-            if new_storage:
-                parsed_list.append(temp)
+                data = {"text": ex["content"]}
+
+            if fmt == "json":
+                rendered.append(json.dumps(data, indent=2))
+            elif fmt == "markdown":
+                rendered.append(self._to_markdown(data))
+            # elif fmt == "jinja2" and template:
+            #     rendered.append(Template(template).render(**data))
             else:
-                # If caller wants the “old-style” raw data_key value:
-                if isinstance(temp, dict) and (data_key in temp): #if isinstance(temp, dict) and (data_key in temp) and (len(temp) == 1):
-                    parsed_list.append(temp[data_key])
-                else:
-                    parsed_list.append(None)
+                rendered.append(ex["content"])
 
-        return parsed_list, results
+        body = "".join(f"{sep['item_prefix']}{t}{sep['item_suffix']}" for t in rendered)
+        return f"{sep['global_prefix']}{body}{sep['global_suffix']}"
 
+    @staticmethod
+    def _to_markdown(obj):
+        return "\n".join(f"**{k}**: {v}" for k, v in obj.items())

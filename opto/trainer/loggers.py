@@ -123,11 +123,11 @@ class TraceMemoryLogger(ConsoleLogger):
     """A logger that writes metrics to TraceMemoryDB."""
     
     def __init__(self, log_dir='./logs', verbose=True, memory_db: Optional[TraceMemoryDB] = None, 
-                 goal_id: str = "training_run", **kwargs):
+                 problem_id: str = "training_run", **kwargs):
         super().__init__(log_dir, **kwargs)
         self.verbose = verbose
         self.memory_db = memory_db or TraceMemoryDB()
-        self.goal_id = goal_id
+        self.problem_id = problem_id
         
     def log(self, name, data, step, **kwargs):
         """Log a message to TraceMemoryDB.
@@ -156,7 +156,7 @@ class TraceMemoryLogger(ConsoleLogger):
             
         # Log to memory database
         self.memory_db.log_data(
-            goal_id=self.goal_id,
+            problem_id=self.problem_id,
             step_id=step,
             data={name: data},
             data_payload=data_payload,
