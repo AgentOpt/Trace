@@ -44,17 +44,25 @@ def standard_forward(agent, x, guide, info, min_score=0):
         target = e.exception_node
         score, feedback = min_score, target.create_feedback('full')
     return target, score, feedback
+
+def get_original_name(node):
+    """Extract the original name from a node, removing all _copy suffixes."""
+    py_name = node.py_name  # This removes colons: "param:0" -> "param0"
+    
+    # Find the first occurrence of "_copy" and remove it and everything after
+    copy_index = py_name.find('_copy')
+    if copy_index != -1:
+        return py_name[:copy_index]
+    else:
+        return py_name
+
 def is_node_copy(a, b):
-    # check if a is a copy of b or b is a copy of a
-    # For int:0, its deepcopied version is int0_copy:x
-    """ Check if a is a copy of b or b is a copy of a or if they are the same node."""
-    if a.name == b.name:
-        return True
-    if '_copy' in a.name and (a.name.split(':')[0].replace('_copy', '') ==  b.py_name):
-        return True
-    if '_copy' in b.name and (b.name.split(':')[0].replace('_copy', '') == a.py_name):
-        return True
-    return False
+    """Check if two nodes are copies of each other by comparing their original names.
+    
+    This function has transitivity: if A is a copy of B and B is a copy of C, 
+    then A is also considered a copy of C.
+    """
+    return get_original_name(a) == get_original_name(b)
 
 def is_module_copy(a, b):
     """ Check if a and b (trace.Modules) are copies of each other. """
