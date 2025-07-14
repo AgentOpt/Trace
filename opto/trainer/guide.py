@@ -45,7 +45,7 @@ class AutoGuide:
         """ Exact match metric """
         return self.get_feedback(query, response, reference)[0]
     
-    def copy(): 
+    def copy(self): 
         """ Create a copy of the guide instance.
 
         Returns:
