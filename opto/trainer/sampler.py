@@ -212,6 +212,34 @@ class Sampler:
         if forward is None:
             self.forward = standard_forward
 
+    @property
+    def dataset(self):
+        """ Get the dataset of the loader. """
+        return self.loader.dataset
+
+    @dataset.setter
+    def dataset(self, value):
+        """ Set the dataset of the loader. """
+        assert isinstance(value, dict), "Dataset must be a dictionary with 'inputs' and 'infos' keys."
+        assert 'inputs' in value and 'infos' in value, "Dataset must contain 'inputs' and 'infos' keys."
+        assert len(value['inputs']) == len(value['infos']), "Length of inputs must match length of infos."
+        self.loader.dataset = value
+
+    @property
+    def batch_size(self):
+        """ Get the batch size of the loader. """
+        return self.loader.batch_size
+
+    @batch_size.setter
+    def batch_size(self, value):
+        """ Set the batch size of the loader. """
+        self.loader.batch_size = value
+
+    @property
+    def n_epochs(self):
+        """ Get the number of epochs of the loader. """
+        return self.loader.n_epochs
+
     def sample(self, agents):
         """ Sample a batch of data from the loader and evaluate the agents.
 

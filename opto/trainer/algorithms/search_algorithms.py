@@ -13,39 +13,14 @@ from opto.trainer.loader import DataLoader
 
 from opto.trainer.sampler import Sampler, RolloutsGraph
 
-# TODO save and load SearchAlgorithm
-# TODO async version
+# TODO save and load SearchTemplate
+# TODO async version???
 # TODO create SYNC and ASYNC versions of the base class; add an attribute to the class to indicate
 # TODO a better data structure to store samples
 
 # update_dict
 
 # Some helper function to convert between trace.Module and update_dict
-
-
-# TODO move it and refactor the trainer code
-def standard_forward(agent, x, guide, info, min_score=0):
-    """ Forward and compute feedback.
-
-        Args:
-            agent: trace.Module
-            x: input
-            guide: (question, student_answer, info) -> score, feedback
-            info: additional information for the guide
-            min_score: minimum score when exception happens
-
-        Returns:
-            target: output of the agent
-            score: score from the guide
-            feedback: feedback from the guide
-        """
-    try:
-        target = agent(x)
-        score, feedback = guide(x, target.data, info)
-    except trace.ExecutionError as e:
-        target = e.exception_node
-        score, feedback = min_score, target.create_feedback('full')
-    return target, score, feedback
 
 
 def get_original_name(node):
@@ -69,16 +44,20 @@ def is_node_copy(a, b):
 
 def is_module_copy(a, b):
     """ Check if a and b (trace.Modules) are copies of each other. """
-    parameters_a = a.parameters()
-    parameters_b = b.parameters()
+    parameters_a = a.parameters() # list of ParameterNode
+    parameters_b = b.parameters() # list of ParameterNode
     # Check if all parameters of a are copies of b or vice versa
+    # This might over count
+    # need to check 1:1 correspondence
+    matched = []
     for p_a in parameters_a:
-        if not any(is_node_copy(p_a, p_b) for p_b in parameters_b):
-            return False
-    for p_b in parameters_b:
-        if not any(is_node_copy(p_b, p_a) for p_a in parameters_a):
-            return False
-    return True
+        _matched = []
+        for p_b in parameters_b:
+            _matched.append(is_node_copy(p_a, p_b))
+    np.array(matched)
+    if np.all(np.sum(matched, axis=1) == 1) and np.all(np.sum(matched, axis=0) == 1):
+        return True
+    return False
 
 def remap_update_dict(base_module, update_dict):
     """ Remap the update dict to the agent's parameters. update_dict might have keys which are copies of the base_module's parameters or visa versa.
@@ -119,6 +98,8 @@ def create_module_from_update_dict(agent, update_dict):
 
 
 class Samples:
+    """ A container for samples collected during the search algorithm. It contains a list of RolloutsGraph objects
+    and a dataset with inputs and infos which created the list of RolloutsGraph. """
 
     samples: List[RolloutsGraph]
     dataset: Dict[str, List[Any]]  # contains 'inputs' and 'infos' keys
@@ -130,7 +111,7 @@ class Samples:
         assert 'inputs' in dataset and 'infos' in dataset, "dataset must contain 'inputs' and 'infos' keys."
 
         self.samples = samples
-        self.dataset = dataset  # TODO this cannot be extracted from the samples in general
+        self.dataset = dataset  # NOTE this cannot be extracted from the samples in general?
 
     def add_samples(self, samples):
         """ Add samples to the Samples object. """
@@ -152,15 +133,13 @@ class Samples:
         return iter(self.samples)
 
     def __len__(self):
-        return len(self.samples)
+        return sum(len(s) for s in self.samples)
 
 
 
-#TODO naming
-class SearchAlgorithm(Minibatch):
+class SearchTemplate(Minibatch):
     # This only uses __init__ and evaluate of Minibatch class.
     """ This implements a generic template for search algorithm. """
-
 
     def train(self,
               guide, # guide to provide feedback
@@ -190,18 +169,13 @@ class SearchAlgorithm(Minibatch):
 
         ## Setup
 
-        test_frequency = eval_frequency  # use eval_frequency as test_frequency  # TODO legacy notation
+        test_frequency = eval_frequency  # use eval_frequency as test_frequency  # NOTE legacy notation
         log_frequency = log_frequency or test_frequency  # frequency of logging (default to test_frequency)
         self.num_threads = num_threads or self.num_threads  # Use provided num_threads or fall back to self.num_threads
         test_dataset = test_dataset or train_dataset  # default to train_dataset if test_dataset is not provided
         test_guide = test_guide or guide
         self.num_eval_samples = num_eval_samples  # number of samples to use to evaluate each input
         self.score_range = score_range or (0., 1.)
-        # Underscore attributes are temporary attributes for the algorithm (which will not be saved)
-        # They would not affect the agent's state or the training process.
-        # self._loader = DataLoader(train_dataset, batch_size=batch_size)  # default data loader for training
-        self._validate_dataset = validate_dataset
-        self._validate_guide = validate_guide or guide
 
         self.train_sampler = Sampler(
             DataLoader(train_dataset, batch_size=batch_size),
@@ -210,22 +184,19 @@ class SearchAlgorithm(Minibatch):
             sub_batch_size=sub_batch_size,
             score_range=self.score_range
         )
+        self._validate_dataset = validate_dataset  # if None, the current batch will be used for validation
         self.validate_sampler = Sampler(
-            DataLoader(validate_dataset  if validate_dataset else {'inputs':[],'infos':[]}, batch_size=batch_size),
+            DataLoader(validate_dataset if validate_dataset else {'inputs':[],'infos':[]}, batch_size=batch_size),
             validate_guide or guide,
             num_threads=self.num_threads,
-            sub_batch_size=sub_batch_size,
+            sub_batch_size=None,  # no sub-batch size for validation
             score_range=self.score_range
         )
-
-
-
-
 
         # Evaluate the agent before learning
         # NOTE set test_frequency < 0 to skip first evaluation
         if (test_frequency is not None) and test_frequency > 0:
-            info_test = self.test(test_dataset, test_guide)
+            info_test = self.test(test_dataset, test_guide)  # test self.agent
             self.log(info_test)
 
         # Save the agent before learning if save_frequency > 0
@@ -244,15 +215,15 @@ class SearchAlgorithm(Minibatch):
             # 1. Propose new parameters given the current state of the algorithm
             # proposals: list of trace.Modules
             update_dict, proposals, info_update = self.update(samples, verbose=verbose, **kwargs)
-            self.optimizer.update(update_dict)  # update the agent with the proposed parameters
+            self.optimizer.update(update_dict)  # update self.agent with the proposed parameters
 
             # 2. Get feedback on the proposed parameters on the current batch
-            # samples: list of list of dict(module, x, info, target, score, feedback)
+            # samples: Samples object containing the samples and the minibatch
             samples, info_sample = self.sample(proposals, verbose=verbose, **kwargs)
 
             # Evaluate the agent after update
             if (test_frequency is not None) and (self.n_iters % test_frequency == 0):
-                info_test = self.test(test_dataset, test_guide)
+                info_test = self.test(test_dataset, test_guide)  # test self.agent
                 self.log(info_test, prefix="Test: ")
 
             # Save the algorithm state
@@ -260,12 +231,15 @@ class SearchAlgorithm(Minibatch):
                 self.save(save_path)
 
             # Log information
+            assert 'mean_score' in info_sample, "info_sample must contain 'mean_score'."
+            assert 'n_epochs' in info_sample, "info_sample must contain 'n_epochs'."
+
             train_scores.append(info_sample['mean_score'])  # so that mean can be computed
             if self.n_iters % log_frequency == 0:
-                self.logger.log('Average mean score', np.mean(train_scores), self.n_iters, color='blue')
+                self.logger.log('Average train score', np.mean(train_scores), self.n_iters, color='blue')
                 self.log(info_update, prefix="Update: ")
                 self.log(info_sample, prefix="Sample: ")
-                self.n_samples += sum(len(s) for s in samples)  # update the number of samples processed
+                self.n_samples += len(samples)  # update the number of samples processed
                 self.logger.log('Number of samples', self.n_samples, self.n_iters, color='blue')
                 # Log parameters
                 for p in self.agent.parameters():
@@ -289,7 +263,7 @@ class SearchAlgorithm(Minibatch):
         # Log information about the sampling
         log_info = {
             'mean_score': np.mean([ g.get_scores() for g in samples.samples]),
-            'n_epochs': self.train_sampler.loader.n_epochs,
+            'n_epochs': self.train_sampler.n_epochs,
         }
         return samples, log_info
 
@@ -314,7 +288,6 @@ class SearchAlgorithm(Minibatch):
         self.save_agent(save_path, self.n_iters)
         # TODO save full state of self
 
-
     # Unimplemented methods that should be implemented by subclasses
     def update(self, samples=None, verbose=False, **kwargs):
         """ Update the agent based on the provided samples.
@@ -334,7 +307,9 @@ class SearchAlgorithm(Minibatch):
         # return update_dict, proposals, info_log
 
 
+# TODO make this hashable?
 class ModuleCandidate:
+    """ A container used by PrioritySearch to store a candidate module as (its base module and update dictionary) and its statistics. """
 
     def __init__(self,
                  base_module: Optional[trace.Module],
@@ -349,11 +324,13 @@ class ModuleCandidate:
         assert isinstance(base_module, trace.Module), "base_module must be a trace.Module."
         self.base_module = base_module
         self.update_dict = update_dict if update_dict is not None else {}
-        self.rollouts = []  # list of dicts containing the rollout information
+        self.rollouts = []  # list of dicts containing the rollout information (not RolloutsGraph, but a list of dicts)
 
     def get_module(self):
         """ Apply the update_dict to the base_module and return the updated module. This will not update the base_module itself."""
-        return create_module_from_update_dict(self.base_module, self.update_dict) if self.update_dict else self.base_module
+        module = create_module_from_update_dict(self.base_module, self.update_dict) if self.update_dict else self.base_module
+        module._ModuleCandidate_candidate_id = id(self)  # set the id of the module to the id of the candidate; this is used to identify the candidate in the priority queue
+        return module  # return the updated module
 
     def apply_update(self, base_module=None):
         """ Apply update to the base_module in place. """
@@ -371,10 +348,9 @@ class ModuleCandidate:
                 setattr(result, k, v)  # base_module is not copied, it is the original module
         return result
 
-    def __equal__(self, other):
+    def __eq__(self, other):
         """ Check if two candidates are equal based on their base_module and update_dict. """
-        if not isinstance(other, ModuleCandidate):
-            return False
+        assert isinstance(other, ModuleCandidate), "other must be an instance of ModuleCandidate."
         if self.base_module != other.base_module:
             return False
         update_dict_self = remap_update_dict(self.base_module, self.update_dict)
@@ -383,21 +359,13 @@ class ModuleCandidate:
 
     def add_rollouts(self, rollouts: List[Dict[str, Any]]):
         """ Add rollouts to the candidate. """
+        assert isinstance(rollouts, list), "rollouts must be a list of dicts."
+        assert all(isinstance(r, dict) for r in rollouts), "All rollouts must be dicts."
+        # Each rollout is a dict with keys: 'module', 'x', 'info', 'target', 'score', 'feedback'
+        assert all('module' in r and 'x' in r and 'info' in r and 'target' in r and 'score' in r and 'feedback' in r for r in rollouts), \
+            "Each rollout must contain 'module', 'x', 'info', 'target', 'score', and 'feedback' keys."
 
-        # # Convert all ParameterNode to data in the rollouts
-        # _rollouts = []
-        # for r in rollouts:
-        #     _r = {}
-        #     for k, v in r.items():
-        #         if isinstance(v, trace.ParameterNode):
-        #             _r[k] = v.data
-        #         else:
-        #             _r[k] = v
-
-            # _rollouts.append(_r)  # convert all ParameterNode to data
         self.rollouts.extend(rollouts)
-        # # XXX TODO hacky
-        # self.rollouts.rollouts.extend(_rollouts)  # extend the rollouts with the
 
     def score(self):
         """ Compute the score of the candidate based on the rollouts. """
@@ -407,14 +375,9 @@ class ModuleCandidate:
         return np.mean(scores) if scores else None
 
 
-class PrioritySearch(SearchAlgorithm):
+class PrioritySearch(SearchTemplate):
+    """ A search algorithm that uses a priority queue to explore the parameter space and propose new candidates. """
 
-    # def train(self, *args,
-    #           num_candidates: int = 10,  # number of candidates to propose
-    #           default_score: Union[float, None] = None,  # default score for the candidates
-    #           validate_proposals: bool = True,  # whether to validate the proposed parameters # TODO better naming
-    #           **kwargs
-    #           ):
     def train(self,
               guide, # guide to provide feedback
               train_dataset,  # dataset of (x, info) pairs to train the agent
@@ -424,7 +387,7 @@ class PrioritySearch(SearchAlgorithm):
               validate_guide = None,  #  to provide scores for the validation set
               # training loop
               batch_size = 1,  # batch size for updating the agent
-              sub_batch_size = None,  # sub-batch size for broadcasting the agents
+              sub_batch_size = None,  # sub-batch size that each optimizer attends to
               score_range = None,  # minimum score to update the agent
               num_epochs = 1,  # number of training epochs
               num_threads = None,  # maximum number of threads to use
@@ -439,19 +402,18 @@ class PrioritySearch(SearchAlgorithm):
               save_path: str = "checkpoints/agent.pkl",  # path to save the agent
               # Priority Search specific parameters
               num_candidates: int = 10,  # number of candidates to propose
-              default_score: Union[float, None] = None,  # default score for the candidates
+              default_score: float = float('inf'),  # default score assigned to priority queue candidates
               validate_proposals: bool = True,  # whether to validate the proposed parameters
               # Additional keyword arguments
               **kwargs
               ):
 
-
         # Create agents and optimizers for search
-        self.num_candidates = num_candidates  # number of candidates to propose
-        self.score_range = score_range or (0., 1.) # XXX hacky now
-        self.default_score = default_score if default_score is not None else self.score_range[0]  # default score for the candidates
+        self.num_candidates = num_candidates  # number of candidates to propose by each optimizer call
         self.validate_proposals = validate_proposals  # whether to validate the proposed parameters
-        self._queue = [(self.default_score, ModuleCandidate(self.agent))]  # priority queue of ModuleCandidates, initialized with the base agent
+        self.default_score = default_score
+        self.memory = [(self.default_score, ModuleCandidate(self.agent))]  # Priority queue of ModuleCandidates, initialized with the base agent
+        self._exploration_candidates = None
 
         super().train(guide, train_dataset,
                       validate_dataset=validate_dataset,
@@ -480,18 +442,21 @@ class PrioritySearch(SearchAlgorithm):
             # 3. Update the priority queue with the validation results
             self.update_memory(validate_results, verbose=verbose, **kwargs)  # samples are provided here in case candidates do not capture full information
         # 4. Explore and exploit the priority queue
-        best_candidate = self.exploit(verbose=verbose, **kwargs)  # get the best candidate (ModuleCandidate) from the priority queue
-        exploration_candidates = self.explore(verbose=verbose, **kwargs)  # List of ModuleCandidates
+        best_candidate, info_exploit = self.exploit(verbose=verbose, **kwargs)  # get the best candidate (ModuleCandidate) from the priority queue
+        exploration_candidates, info_explore = self.explore(verbose=verbose, **kwargs)  # List of ModuleCandidates
 
+        self._exploration_candidates = exploration_candidates
 
-        # TBD Log information about the update
+        # TODO Log information about the update
         info_log = {
             'best_candidate_score': best_candidate.score(),
             'num_exploration_candidates': len(exploration_candidates),
         }
+        info_log.update(info_exploit)  # add the info from the exploit step
+        info_log.update(info_explore)  # add the info from the explore step
         return best_candidate.update_dict, [c.get_module() for c in exploration_candidates], info_log
 
-    def propose(self, samples=None, verbose=False, n_proposals=1, **kwargs):
+    def propose(self, samples, verbose=False, n_proposals=1, **kwargs):
         """ Analyzing samples and propose new parameters using self.optimizer. An independent optimizer is used for the minibatch generated by one agent and generates n_proposals proposals.
 
         Args:
@@ -503,18 +468,14 @@ class PrioritySearch(SearchAlgorithm):
         Returns:
             candidates (list of ModuleCandidate): A list of proposed candidates for the next iteration.
         """
-        if samples is None:
-            parameters = self.optimizer.parameters  # use the current parameters of the optimizer
-            update_dict = {p: p.data for p in parameters}  # return the current parameters as the update dict
-            # TODO what to do here? should we return n_proposals variations?
-            return [update_dict]  # return the update dict as a list
 
         assert isinstance(samples, Samples), "samples must be an instance of Samples."
-        samples = samples.samples
+        samples = samples.samples  # list of RolloutsGraph objects
+
         def _step(n, verbose=False, num_threads=None, **kwargs):
             """ Standard optimizer step for a single agent. """
             # optimizer = self._optimizers[n]  # get the optimizer for the n-th agent
-            # TODO this seems slow
+            # NOTE this seems slow
             optimizer = copy.deepcopy(self.optimizer)  # create a copy of the optimizer to avoid modifying the original one
 
             rollouts = samples[n]  # RolloutsGraph
@@ -549,68 +510,70 @@ class PrioritySearch(SearchAlgorithm):
         candidates = [ModuleCandidate(self.agent, update_dict) for update_dict in update_dicts]
         return candidates
 
-
-    def validate(self, candidates, samples=None, verbose=False, **kwargs):
+    def validate(self, candidates, samples, verbose=False, **kwargs):
         """ Validate the proposed candidate parameters
         Args:
-            candidates (list of dict): A list of ModuleCandidate objects representing the proposed parameters.
+            candidates (list of ModuleCandidate): A list of ModuleCandidate objects representing the proposed parameters.
             samples (list of dict, optional): A list of samples collected in the current iteration. Defaults to None.
             verbose (bool, optional): Whether to print verbose output. Defaults to False.
             **kwargs: Additional keyword arguments that may be used by the implementation.
         Returns:
-            results (dict [ModuleCandidate, list of dict]): A dictionary where the keys are ModuleCandidate objects and the values are lists of rollouts (list of dicts) containing the module, x, info, target, score, feedback.
+            results (dict): A dictionary where the keys are ids of ModuleCandidate objects and the values are ModuleCandidate and lists of rollouts (list of dicts) containing the module, x, info, target, score, feedback.
         """
 
         # Get the validation dataset from the samples. If no validation dataset is provided, use the current batch.
         if self._validate_dataset is None:
             # If no validation dataset is provided, use the current batch
             validate_dataset = samples.get_batch()  # get the batch of inputs and infos from the samples
-            self.validate_sampler.loader.dataset = validate_dataset  # set the validation dataset in the sampler
+            self.validate_sampler.dataset = validate_dataset  # set the validation dataset in the sampler
             self.validate_sampler.batch_size = len(validate_dataset['inputs'])  # set the batch size to the number of inputs in the validation dataset
 
         candidate_agents = [c.get_module() for c in candidates]  # get the modules from the candidates
         validate_samples = Samples(*self.validate_sampler.sample(candidate_agents))  # list of RolloutsGraph objects
-        # TODO log _
 
+
+        exploration_candidates = self._exploration_candidates  # exploration candidates from the previous iteration
+        assert exploration_candidates is not None, "exploration_candidates must be set before calling validate."
         if self.validate_proposals:
             if self._validate_dataset is None:
+                # NOTE this might contain some duplicates due to sub_batch_size < batch_size
                 validate_samples.add_samples(samples)  # if no validation dataset is provided, append the samples to the validate_samples
             else:  # validate the agents in the validate_dataset
-                # TODO need a flag?
-                exploration_agents = [rollouts.module for rollouts in samples.samples]
+                # exploration_agents = [rollouts.module for rollouts in samples.samples]  # NOTE this might contain some duplicates due to sub_batch_size < batch_size
+                exploitation_agents = [c.get_module() for c in exploration_candidates]  # get the modules from the exploration candidates
                 exploration_samples = Samples(*self.validate_sampler.sample(exploration_agents))  # sample the exploration agents
                 validate_samples.add_samples(exploration_samples)  # append the exploration samples to the validate_samples
 
 
         # Return a dict, key: ModuleCandidate, value: rollouts (list of dicts)
-        results = {}
+        # In validate_samples, there may be multiple rollouts collected by the same agent (or their copies).
+        # We need to group the rollouts by the agent (ModuleCandidate) and return a dictionary where the keys are the ModuleCandidate objects and the values are lists of rollouts (list of dicts).
+        results = {}  # dict of ModuleCandidate: list of rollouts (list of dicts)
+        for c in candidates + exploration_candidates:
+            # Initialize the candidate in the results dictionary
+            results[id(c)] = (c, [])  # (ModuleCandidate, list of rollouts)
+
         for rollouts in validate_samples.samples:
-            # rollouts is subgraph
-            agent = rollouts.module
-            index = candidate_agents.index(agent)
-            candidate = candidates[index]  # get the candidate corresponding to the agent
-            # TODO delete 'module' from the rollouts dict?
-            if candidate in results:
-                # If the candidate already exists in results, we can append the rollouts to the existing list
-                results[candidate].extend(rollouts)
-            else:
-                # If the candidate does not exist in results, we create a new entry
-                results[candidate] = rollouts
+            module = rollouts.module  # trace.Module
+            key = module._ModuleCandidate_candidate_id  # use the candidate id as the key
+            if key not in results:
+                raise ValueError(f"ModuleCandidate with id {key} not found in results. Samples are not collected by known candidates.")
+            # Append the rollouts to the list of rollouts for the key
+            results[key][1].extend(rollouts.to_list())
         return results
 
 
 
     def update_memory(self, validate_results, **kwargs):
-
         """ Update the priority queue with the validation results.
         Args:
             validate_results (dict): A dictionary where the keys are ModuleCandidate objects and the values are lists of rollouts (list of dicts) containing the module, x, info, target, score, feedback.
             **kwargs: Additional keyword arguments that may be used by the implementation.
         """
-        for candidate, rollouts in validate_results.items():
-            candidate.add_rollouts(rollouts.to_list())  # add the rollouts to the candidate
+        for candidate_id, (candidate, rollouts) in validate_results.items():
+            candidate.add_rollouts(rollouts)  # add the rollouts to the candidate
             score = self.compute_score(candidate)  # compute the score for the candidate
-            heapq.heappush(self._queue, (-score, candidate))  # add the candidate to the priority queue
+            heapq.heappush(self.memory, (-score, candidate))  # add the candidate to the priority queue
 
 
     ####
@@ -624,13 +587,14 @@ class PrioritySearch(SearchAlgorithm):
         """
         # pop top self.num_candidates candidates from the priority queue
         top_candidates = []
-        while len(top_candidates) < self.num_candidates and self._queue:
-            score, candidate = heapq.heappop(self._queue)
+        while len(top_candidates) < self.num_candidates and self.memory:
+            score, candidate = heapq.heappop(self.memory)
             top_candidates.append(candidate)  # add the candidate to the top candidates
-        return top_candidates
+        return top_candidates, {}
 
 
     def exploit(self, **kwargs):
+        # NOTE This function can be overridden by subclasses to compute a different score
         """ Exploit the best candidate from the priority queue. This method should not change the priority queue.
         Args:
             **kwargs: Additional keyword arguments that may be used by the implementation.
@@ -639,14 +603,31 @@ class PrioritySearch(SearchAlgorithm):
         """
         # Right now, we just return the best candidate from the priority queue
         # This function can be overridden by subclasses to implement a different exploitation strategy
-        if not self._queue:
+        if not self.memory:
             raise ValueError("The priority queue is empty. Cannot exploit.")
-        best = min(self._queue)  # (score, candidate)
-        return best[1]
+        best = min(self.memory)  # (score, candidate)
+        score, best_candidate = best
+        score = -score # remember that we stored negative scores in the priority queue
+        return best_candidate, {
+            'best_candidate_score': score,  # remember that we stored negative scores in the priority queue
+        }
+
+
 
     def compute_score(self, candidate):
-        # By default, we compute the mean score of the rollouts
         # NOTE This function can be overridden by subclasses to compute a different score
+        """ Compute the score for the candidate based on the rollouts during the validation phase.
+        It can be overridden by subclasses to implement a different scoring strategy.
+
+        Args:
+            candidate (ModuleCandidate): The candidate for which to compute the score.
+        Returns:
+            float: The computed score for the candidate.
+        """
+        if not isinstance(candidate, ModuleCandidate):
+            raise TypeError("candidate must be an instance of ModuleCandidate.")
+        # By default, we compute the mean score of the rollouts
+
         scores = [r['score'] for r in candidate.rollouts]
         default_score = self.default_score  if self.default_score is not None else self.score_range[1]  # default score for the candidates
 
