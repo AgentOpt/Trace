@@ -261,8 +261,10 @@ class SearchTemplate(Minibatch):
         samples = Samples(*self.train_sampler.sample(agents))  # create a Samples object to store the samples and the minibatch
 
         # Log information about the sampling
+        scores = [ g.get_scores() for g in samples.samples]  # list of list of scores for each RolloutsGraph
+        scores = [item for sublist in scores for item in sublist]  # flatten the list of scores
         log_info = {
-            'mean_score': np.mean([ g.get_scores() for g in samples.samples]),
+            'mean_score': np.mean(scores),
             'n_epochs': self.train_sampler.n_epochs,
         }
         return samples, log_info
@@ -328,7 +330,7 @@ class ModuleCandidate:
 
     def get_module(self):
         """ Apply the update_dict to the base_module and return the updated module. This will not update the base_module itself."""
-        module = create_module_from_update_dict(self.base_module, self.update_dict) if self.update_dict else self.base_module
+        module = create_module_from_update_dict(self.base_module, self.update_dict) if self.update_dict else copy.deepcopy(self.base_module)
         module._ModuleCandidate_candidate_id = id(self)  # set the id of the module to the id of the candidate; this is used to identify the candidate in the priority queue
         return module  # return the updated module
 
@@ -545,7 +547,8 @@ class PrioritySearch(SearchTemplate):
                 validate_samples.add_samples(exploration_samples)  # append the exploration samples to the validate_samples
 
 
-        # Return a dict, key: ModuleCandidate, value: rollouts (list of dicts)
+        # TODO some ModuleCandidate are the same in parameters though they have different ids
+
         # In validate_samples, there may be multiple rollouts collected by the same agent (or their copies).
         # We need to group the rollouts by the agent (ModuleCandidate) and return a dictionary where the keys are the ModuleCandidate objects and the values are lists of rollouts (list of dicts).
         results = {}  # dict of ModuleCandidate: list of rollouts (list of dicts)
