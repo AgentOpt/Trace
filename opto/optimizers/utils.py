@@ -1,3 +1,5 @@
+from typing import Dict, Any
+
 def print_color(message, color=None, logger=None):
     colors = {
         "red": "\033[91m",
