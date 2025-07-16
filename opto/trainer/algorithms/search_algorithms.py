@@ -82,8 +82,8 @@ def set_module_parameters(agent, update_dict):
         The update_dict is a dictionary of ParameterNode: value pairs.
         The agent's parameters will be updated with the values from the update_dict.
     """
-    remap_update_dict = remap_update_dict(agent, update_dict)  # remap the update dict to the agent's parameters
-    for k, v in remap_update_dict.items():
+    remapped_update_dict = remap_update_dict(agent, update_dict)  # remap the update dict to the agent's parameters
+    for k, v in remapped_update_dict.items():
         k._data = v  # set the parameter's data to the value in the update_dict
 
 def create_module_from_update_dict(agent, update_dict):
