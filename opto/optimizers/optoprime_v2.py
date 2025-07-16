@@ -159,6 +159,8 @@ class OptimizerPromptSymbolSet:
     improved_variable_tag = "variable"
     name_tag = "name"
 
+    expect_json = False  # this will stop `enforce_json` arguments passed to LLM calls
+
     # custom output format
     # if this is not None, then the user needs to implement the following functions:
     # - output_response_extractor
@@ -253,6 +255,8 @@ class OptimizerPromptSymbolSet:
 
 class OptimizerPromptSymbolSetJSON(OptimizerPromptSymbolSet):
     """We enforce a JSON output format extraction"""
+
+    expect_json = True
 
     custom_output_format_instruction = """
     {{
@@ -533,9 +537,11 @@ class OptoPrimeV2(OptoPrime):
             log=True,
             initial_var_char_limit=100,
             optimizer_prompt_symbol_set: OptimizerPromptSymbolSet = OptimizerPromptSymbolSet(),
+            use_json_object_format=True,  # whether to use json object format for the response when calling LLM
             **kwargs,
     ):
         super().__init__(parameters, *args, propagator=propagator, **kwargs)
+        self.use_json_object_format = use_json_object_format if optimizer_prompt_symbol_set.expect_json and use_json_object_format else False
         self.ignore_extraction_error = ignore_extraction_error
         self.llm = llm or LLM()
         self.objective = objective or self.default_objective.format(value_tag=optimizer_prompt_symbol_set.value_tag,
@@ -808,7 +814,9 @@ class OptoPrimeV2(OptoPrime):
             {"role": "user", "content": user_prompt},
         ]
 
-        response = self.llm(messages=messages, max_tokens=max_tokens)
+        response_format = {"type": "json_object"} if self.use_json_object_format else None
+
+        response = self.llm(messages=messages, max_tokens=max_tokens, response_format=response_format)
 
         response = response.choices[0].message.content
 
