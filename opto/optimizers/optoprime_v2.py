@@ -432,6 +432,12 @@ class ProblemInstance:
             text = text.replace(default_prompt_symbols[k], v)
         return text
 
+def truncate_expression(value, limit):
+    # https://stackoverflow.com/questions/1436703/what-is-the-difference-between-str-and-repr
+    value = str(value)
+    if len(value) > limit:
+        return value[:limit] + "...(skipped due to length limit)"
+    return value
 
 class OptoPrimeV2(OptoPrime):
     # This is generic representation prompt, which just explains how to read the problem.
@@ -538,9 +544,13 @@ class OptoPrimeV2(OptoPrime):
             initial_var_char_limit=100,
             optimizer_prompt_symbol_set: OptimizerPromptSymbolSet = OptimizerPromptSymbolSet(),
             use_json_object_format=True,  # whether to use json object format for the response when calling LLM
+            truncate_expression=truncate_expression,
             **kwargs,
     ):
         super().__init__(parameters, *args, propagator=propagator, **kwargs)
+
+        self.truncate_expression = truncate_expression
+
         self.use_json_object_format = use_json_object_format if optimizer_prompt_symbol_set.expect_json and use_json_object_format else False
         self.ignore_extraction_error = ignore_extraction_error
         self.llm = llm or LLM()
@@ -654,13 +664,6 @@ class OptoPrimeV2(OptoPrime):
                 temp_list.append(
                     f"<{node_tag} name=\"{k}\" type=\"code\">\n<{value_tag}>\n{signature}{node_value}\n</{value_tag}>\n{constraint_expr}\n</{node_tag}>\n")
         return "\n".join(temp_list)
-
-    def truncate_expression(self, value, limit):
-        # https://stackoverflow.com/questions/1436703/what-is-the-difference-between-str-and-repr
-        value = str(value)
-        if len(value) > limit:
-            return value[:limit] + "...(skipped due to length limit)"
-        return value
 
     def construct_prompt(self, summary, mask=None, *args, **kwargs):
         """Construct the system and user prompt."""
