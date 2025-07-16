@@ -67,14 +67,14 @@ def remap_update_dict(base_module, update_dict):
     """
     parameters = base_module.parameters()  # get the parameters of the base agent
     remapped_update_dict = {}
-    for k, v in update_dict.items():
-        for p in parameters:
-            # Check if k is a copy of p or p is a copy of k
+    # if fill_missing:
+    # remap all keys of the base_module's parameters and those in update_dict will be filled with their values in update_dict
+    for p in parameters:
+        remapped_update_dict[p] = p.data
+        for k, v in update_dict.items():
             if is_node_copy(k, p):
-                k = p  # remap k to the original parameter
-                remapped_update_dict[k] = v  # set the value in the remapped update dict
-                break  # stop checking once we've found a match
-    # remapped_update_dict is empty if no keys in update_dict matched any parameters of the base_module
+                remapped_update_dict[p] = v
+                break # stop checking once we've found a match
     return remapped_update_dict
 
 def set_module_parameters(agent, update_dict):
@@ -326,12 +326,15 @@ class ModuleCandidate:
         assert isinstance(base_module, trace.Module), "base_module must be a trace.Module."
         self.base_module = base_module
         self.update_dict = update_dict if update_dict is not None else {}
+        self.update_dict = remap_update_dict(self.base_module, self.update_dict)
         self.rollouts = []  # list of dicts containing the rollout information (not RolloutsGraph, but a list of dicts)
 
     def get_module(self):
-        """ Apply the update_dict to the base_module and return the updated module. This will not update the base_module itself."""
-        module = create_module_from_update_dict(self.base_module, self.update_dict) if self.update_dict else copy.deepcopy(self.base_module)
-        module._ModuleCandidate_candidate_id = id(self)  # set the id of the module to the id of the candidate; this is used to identify the candidate in the priority queue
+        """ Apply the update_dict to the base_module and return the updated module.
+        A new module is always created so the base_module is not modified.
+        The new module has a new attribute _module_candidate which is this candidate."""
+        module = create_module_from_update_dict(self.base_module, self.update_dict) if self.update_dict else copy.deepcopy(self.base_module)  #
+        setattr(module, '__TRACE_RESERVED_module_candidate_id', id(self))
         return module  # return the updated module
 
     def apply_update(self, base_module=None):
@@ -345,7 +348,7 @@ class ModuleCandidate:
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             if k != 'base_module':
-                setattr(result, k, deepcopy(v, memo))
+                setattr(result, k, copy.deepcopy(v, memo))
             else:
                 setattr(result, k, v)  # base_module is not copied, it is the original module
         return result
@@ -353,11 +356,11 @@ class ModuleCandidate:
     def __eq__(self, other):
         """ Check if two candidates are equal based on their base_module and update_dict. """
         assert isinstance(other, ModuleCandidate), "other must be an instance of ModuleCandidate."
-        if self.base_module != other.base_module:
-            return False
-        update_dict_self = remap_update_dict(self.base_module, self.update_dict)
-        update_dict_other = remap_update_dict(other.base_module, other.update_dict)
-        return update_dict_self == update_dict_other
+        return self.update_dict == other.update_dict
+
+    def __hash__(self):
+        """ Hash the candidate based on its update_dict. """
+        return hash(frozenset(self.update_dict.items()))
 
     def add_rollouts(self, rollouts: List[Dict[str, Any]]):
         """ Add rollouts to the candidate. """
@@ -551,18 +554,36 @@ class PrioritySearch(SearchTemplate):
 
         # In validate_samples, there may be multiple rollouts collected by the same agent (or their copies).
         # We need to group the rollouts by the agent (ModuleCandidate) and return a dictionary where the keys are the ModuleCandidate objects and the values are lists of rollouts (list of dicts).
-        results = {}  # dict of ModuleCandidate: list of rollouts (list of dicts)
-        for c in candidates + exploration_candidates:
-            # Initialize the candidate in the results dictionary
-            results[id(c)] = (c, [])  # (ModuleCandidate, list of rollouts)
+        # Group the samples by the ModuleCandidate id
+        _results = {}  # dict of ModuleCandidate: list of rollouts (list of dicts)
+        for c in exploration_candidates + candidates:
+            _results[id(c)] = []
 
         for rollouts in validate_samples.samples:
             module = rollouts.module  # trace.Module
-            key = module._ModuleCandidate_candidate_id  # use the candidate id as the key
-            if key not in results:
+            key = getattr(module, '__TRACE_RESERVED_module_candidate_id')  # use the candidate as the key
+            if key not in _results:
                 raise ValueError(f"ModuleCandidate with id {key} not found in results. Samples are not collected by known candidates.")
             # Append the rollouts to the list of rollouts for the key
-            results[key][1].extend(rollouts.to_list())
+            _results[key].extend(rollouts.to_list())
+
+        # Merge rollouts of ModuleCandidates sharing the same parameters
+        results = {}  # dict of ModuleCandidate id: (ModuleCandidate, list of rollouts)
+        for c in exploration_candidates + candidates:
+            rollouts_list = _results[id(c)]
+            matched = False
+            for k in results.keys():
+                if k == c:
+                    matched = True
+                    if id(k) != id(c):  # merging rollouts of candidates with the same parameters
+                        rollouts_list += c.rollouts
+                    results[k].extend(rollouts_list)  # add the rollouts to the candidate
+                    break
+            if not matched:  # key not found in results
+                results[c] = rollouts_list  # add the rollouts to the candidate
+
+        # NOTE what if propose creates multiple exploration_candidates that have the same parameters and the same rollouts stats?
+        # For example, it copies candidates. This would create a bug.
         return results
 
 
@@ -573,7 +594,7 @@ class PrioritySearch(SearchTemplate):
             validate_results (dict): A dictionary where the keys are ModuleCandidate objects and the values are lists of rollouts (list of dicts) containing the module, x, info, target, score, feedback.
             **kwargs: Additional keyword arguments that may be used by the implementation.
         """
-        for candidate_id, (candidate, rollouts) in validate_results.items():
+        for candidate, rollouts in validate_results.items():
             candidate.add_rollouts(rollouts)  # add the rollouts to the candidate
             score = self.compute_score(candidate)  # compute the score for the candidate
             heapq.heappush(self.memory, (-score, candidate))  # add the candidate to the priority queue
