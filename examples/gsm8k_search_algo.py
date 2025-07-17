@@ -3,8 +3,8 @@ import numpy as np
 from opto import trace
 from opto.utils.llm import LLM, LiteLLM
 from opto.optimizers import OptoPrime
-from opto.trainer.algorithms.search_algorithms import UCBSearch as SearchAlgorithm
-from opto.trainer.loggers import WandbLogger
+from opto.trainer.algorithms.search_algorithms import PrioritySearch as SearchAlgorithm
+from opto.trainer.loggers import TensorboardLogger
 from opto.trainer.guide import VerbalJudgeGuide
 from typing import Any
 
@@ -47,7 +47,8 @@ class Learner:
 
 
 Guide = VerbalJudgeGuide
-Logger = WandbLogger
+Logger = TensorboardLogger
+
 
 def main():
     # set seed
@@ -61,9 +62,9 @@ def main():
     num_threads = 10
     datasize = 5
     verbose = True
-    teacher_model = "vertex_ai/gemini-2.0-flash"  # use default model
-    student_model = "vertex_ai/gemini-2.0-flash"  # use default model
-    optimizer_model = "vertex_ai/gemini-2.0-flash"  # use default model
+    teacher_model = None  # use default model
+    student_model = None  # use default model
+    optimizer_model = None  # use default model
 
     np.random.seed(seed)
 
@@ -76,7 +77,7 @@ def main():
     agent = Learner(llm=LLM(student_model))
     guide = Guide(llm=LLM(teacher_model))
     optimizer = OptoPrime(agent.parameters(), llm=LLM(optimizer_model))
-    logger = Logger(project="gsm8k-examples", name="ucb",verbose=verbose)
+    logger = Logger(verbose=verbose)
              # set use_json_object_format=False if LLM does not support JSON object format
 
     alg = SearchAlgorithm(
