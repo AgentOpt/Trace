@@ -67,12 +67,9 @@ def remap_update_dict(base_module, update_dict):
     """
     parameters = base_module.parameters()  # get the parameters of the base agent
     remapped_update_dict = {}
-    # if fill_missing:
-    # remap all keys of the base_module's parameters and those in update_dict will be filled with their values in update_dict
-    for p in parameters:
-        remapped_update_dict[p] = p.data
-        for k, v in update_dict.items():
-            if is_node_copy(k, p):
+    for k, v in update_dict.items():
+        for p in parameters:
+            if is_node_copy(k, p): # Check if k is a copy of p or p is a copy of k
                 remapped_update_dict[p] = v
                 break # stop checking once we've found a match
     return remapped_update_dict
@@ -497,6 +494,10 @@ class PrioritySearch(SearchTemplate):
             optimizer.zero_feedback()  # reset the optimizer's feedback
             optimizer.backward(target, feedback)  # compute the gradients based on the targets and feedbacks
             update_dict = optimizer.step(verbose=verbose, num_threads=num_threads, bypassing=True, **kwargs)
+            # update_dict may only contain some of the parameters of the agent, we need to make sure it contains all the parameters
+            for param in optimizer.parameters: # for all parameters
+                if param not in update_dict: # update_dict misses some parameters
+                    update_dict[param] = param.data # add the parameter to the update_dict
             # the update_dict is linked to the copied parameters of the agent, we set it back to the agent's parameters
             update_dict = remap_update_dict(self.agent, update_dict)  # remap the update dict to the agent's parameters
             return update_dict  # return the proposed parameters
