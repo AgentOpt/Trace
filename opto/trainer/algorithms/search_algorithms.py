@@ -18,10 +18,8 @@ from opto.trainer.sampler import Sampler, RolloutsGraph
 # TODO create SYNC and ASYNC versions of the base class; add an attribute to the class to indicate
 # TODO a better data structure to store samples
 
-# update_dict
 
-# Some helper function to convert between trace.Module and update_dict
-
+# Some helper functions to convert between trace.Module and update_dict
 
 def get_original_name(node):
     """Extract the original name from a node, removing all _copy suffixes."""
@@ -153,8 +151,8 @@ class SearchTemplate(Minibatch):
               num_threads = None,  # maximum number of threads to use
               verbose = False,  # whether to print the output of the agent
               # evaluation
-              test_dataset = None, # dataset of (x, info) pairs to evaluate the agent
-              test_guide = None, # guide to provide scores for the test set
+              test_dataset = None, # dataset of (x, info) pairs to evaluate the agent; if None, use train_dataset
+              test_guide = None, # guide to provide scores for the test set; if None, use guide
               eval_frequency: Union[int, None] = 1,  # frequency of evaluation
               num_eval_samples: int = 1,  # number of samples to use to evaluate each input
               # logging
@@ -165,14 +163,13 @@ class SearchTemplate(Minibatch):
               ):
 
         ## Setup
-
         test_frequency = eval_frequency  # use eval_frequency as test_frequency  # NOTE legacy notation
         log_frequency = log_frequency or test_frequency  # frequency of logging (default to test_frequency)
         self.num_threads = num_threads or self.num_threads  # Use provided num_threads or fall back to self.num_threads
         test_dataset = test_dataset or train_dataset  # default to train_dataset if test_dataset is not provided
         test_guide = test_guide or guide
         self.num_eval_samples = num_eval_samples  # number of samples to use to evaluate each input
-        self.score_range = score_range or (0., 1.)
+        self.score_range = score_range or (-np.inf, np.inf)
 
         self.train_sampler = Sampler(
             DataLoader(train_dataset, batch_size=batch_size),
@@ -376,6 +373,45 @@ class ModuleCandidate:
         scores = [r['score'] for r in self.rollouts]
         return np.mean(scores) if scores else None
 
+class HeapMemory:
+    # This is a basic implementation of a heap memory that uses a priority queue to store candidates.
+    # Later on this will be replaced by a memory DB.
+    def __init__(self, size=None):
+        """ Initialize an empty heap memory. """
+        self.memory = []
+        self.size = size  # Optional size limit for the heap memory
+
+    def push(self, item):
+        """ Push an item to the heap memory. """
+        heapq.heappush(self.memory, item)
+        if self.size is not None and len(self.memory) > self.size:
+            # NOTE a heuristic for now
+            self.memory = self.memory[:self.size]  # Keep only the top `size` items
+
+    def pop(self):
+        """ Pop the top item from the heap memory. """
+        if not self.memory:
+            raise IndexError("pop from an empty heap memory")
+        return heapq.heappop(self.memory)
+
+    def __len__(self):
+        """ Return the number of items in the heap memory. """
+        return len(self.memory)
+
+    def __bool__(self):
+        """ Return True if the heap memory is not empty, False otherwise. """
+        return len(self.memory) > 0
+
+    def __iter__(self):
+        """ Iterate over the items in the heap memory. """
+        return iter(self.memory)
+
+    def best(self):
+        """ Return the best item in the heap memory without removing it. """
+        if not self.memory:
+            raise IndexError("best from an empty heap memory")
+        return self.memory[0]
+
 
 class PrioritySearch(SearchTemplate):
     """ A search algorithm that uses a priority queue to explore the parameter space and propose new candidates. """
@@ -406,6 +442,7 @@ class PrioritySearch(SearchTemplate):
               num_candidates: int = 10,  # number of candidates to propose
               default_score: float = float('inf'),  # default score assigned to priority queue candidates
               validate_proposals: bool = True,  # whether to validate the proposed parameters
+              memory_size: Optional[int] = None,  # size of the heap memory to store the candidates; if None, no limit is set
               # Additional keyword arguments
               **kwargs
               ):
@@ -414,7 +451,9 @@ class PrioritySearch(SearchTemplate):
         self.num_candidates = num_candidates  # number of candidates to propose by each optimizer call
         self.validate_proposals = validate_proposals  # whether to validate the proposed parameters
         self.default_score = default_score
-        self.memory = [(self.default_score, ModuleCandidate(self.agent))]  # Priority queue of ModuleCandidates, initialized with the base agent
+        self.memory = HeapMemory(size=memory_size)  # Initialize the heap memory with a size limit
+        self.memory.push((self.default_score, ModuleCandidate(self.agent)))  # Push the base agent as the first candidate
+
         self._exploration_candidates = None
 
         super().train(guide, train_dataset,
@@ -494,6 +533,8 @@ class PrioritySearch(SearchTemplate):
             optimizer.zero_feedback()  # reset the optimizer's feedback
             optimizer.backward(target, feedback)  # compute the gradients based on the targets and feedbacks
             update_dict = optimizer.step(verbose=verbose, num_threads=num_threads, bypassing=True, **kwargs)
+            if not update_dict:  # if the optimizer did not propose any updates
+                return None # return None to indicate no updates were proposed
             # update_dict may only contain some of the parameters of the agent, we need to make sure it contains all the parameters
             for param in optimizer.parameters: # for all parameters
                 if param not in update_dict: # update_dict misses some parameters
@@ -513,7 +554,7 @@ class PrioritySearch(SearchTemplate):
                                   description="Running optimizers on samples")
         # update_dicts is a list of dicts of length n_agents * n_proposals
         # Create ModuleCandidate objects for each proposed update_dict
-        candidates = [ModuleCandidate(self.agent, update_dict) for update_dict in update_dicts]
+        candidates = [ModuleCandidate(self.agent, update_dict) for update_dict in update_dicts if update_dict is not None]  # filter out None updates
         return candidates
 
     def validate(self, candidates, samples, verbose=False, **kwargs):
@@ -598,7 +639,7 @@ class PrioritySearch(SearchTemplate):
         for candidate, rollouts in validate_results.items():
             candidate.add_rollouts(rollouts)  # add the rollouts to the candidate
             score = self.compute_score(candidate)  # compute the score for the candidate
-            heapq.heappush(self.memory, (-score, candidate))  # add the candidate to the priority queue
+            self.memory.push((-score, candidate))  # push the candidate to the priority queue with negative score (to make it a max-heap)
 
 
     ####
@@ -613,7 +654,7 @@ class PrioritySearch(SearchTemplate):
         # pop top self.num_candidates candidates from the priority queue
         top_candidates = []
         while len(top_candidates) < self.num_candidates and self.memory:
-            score, candidate = heapq.heappop(self.memory)
+            score, candidate = self.memory.pop()  # pop the top candidate from the priority queue
             top_candidates.append(candidate)  # add the candidate to the top candidates
         return top_candidates, {}
 
@@ -630,7 +671,7 @@ class PrioritySearch(SearchTemplate):
         # This function can be overridden by subclasses to implement a different exploitation strategy
         if not self.memory:
             raise ValueError("The priority queue is empty. Cannot exploit.")
-        best = min(self.memory)  # (score, candidate)
+        best = self.memory.best()  # (score, candidate)
         score, best_candidate = best
         score = -score # remember that we stored negative scores in the priority queue
         return best_candidate, {
