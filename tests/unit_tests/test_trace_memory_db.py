@@ -115,6 +115,11 @@ def memdb(request):
     if request.param == "inmemory":
         return TraceMemoryDB()
     else:
+        try:
+            import importlib
+            importlib.import_module("langchain_chroma")
+        except ImportError:
+            pytest.skip("langchain_chroma not installed")
         # explicit Chroma‐backed VectorDB via its real constructor
         dirpath = f"/tmp/chroma_test_{uuid.uuid4().hex}"
         coll = f"col_{uuid.uuid4().hex}"
