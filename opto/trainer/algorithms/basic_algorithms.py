@@ -84,6 +84,7 @@ class Minibatch(AlgorithmBase):
         if eval_frequency > 0:
             test_score = self.evaluate(self.agent, guide, test_dataset['inputs'], test_dataset['infos'],
                           min_score=min_score, num_threads=num_threads,
+                          num_samples=self.num_eval_samples,
                           description=f"Evaluating agent (iteration {self.n_iters})")  # and log
             self.logger.log('Average test score', test_score, self.n_iters, color='green')
 
@@ -123,6 +124,7 @@ class Minibatch(AlgorithmBase):
                 if test_dataset is not None and self.n_iters % eval_frequency == 0:
                     test_score = self.evaluate(self.agent, guide, test_dataset['inputs'], test_dataset['infos'],
                                   min_score=min_score, num_threads=num_threads,
+                                  num_samples=self.num_eval_samples,
                                   description=f"Evaluating agent (iteration {self.n_iters})")  # and log
                     self.logger.log('Average test score', test_score, self.n_iters, color='green')
 
@@ -146,10 +148,10 @@ class Minibatch(AlgorithmBase):
         """ Evaluate the agent on the given dataset. """
         num_threads = num_threads or self.num_threads  # Use provided num_threads or fall back to self.num_threads
         test_scores = evaluate(agent, guide, xs, infos, min_score=min_score, num_threads=num_threads,
-                               num_samples=num_samples, description=description, num_samples=self.num_eval_samples)
+                               num_samples=num_samples, description=description)
         if all([s is not None for s in test_scores]):
             return np.mean(test_scores)
-        
+
     def has_improvement(self, xs, guide, infos, current_score, current_outputs, backup_dict, threshold=0, num_threads=None, *args, **kwargs):
         # This function can be overridden by subclasses to implement their own improvement check.
         """ Check if the updated agent is improved compared to the current one.
@@ -166,6 +168,7 @@ class Minibatch(AlgorithmBase):
         num_threads = num_threads or self.num_threads  # Use provided num_threads or fall back to self.num_threads
         new_score = self.evaluate(self.agent, guide, xs, infos, num_threads=num_threads,
                                  description=f"Checking improvement (iteration {self.n_iters})",
+                                 num_samples=self.num_eval_samples,
                                  *args, **kwargs)  # evaluate the updated agent
         if new_score is None or new_score <= current_score - threshold:
             print_color(f"Update rejected: Current score {current_score}, New score {new_score}", 'red')
@@ -305,13 +308,13 @@ class BasicSearchAlgorithm(MinibatchAlgorithm):
         # Generate different proposals
         step_kwargs = dict(bypassing=True, verbose='output' if verbose else False)  # we don't print the inner full message
         step_kwargs.update(kwargs)  # update with additional kwargs if provided
-                
+
         # Use aysnc_run to run the optimizer_step in parallel
-        # NOTE optimizer_step is coupled via async_run 
+        # NOTE optimizer_step is coupled via async_run
         update_dicts = async_run([super().optimizer_step]*self.num_proposals,
                                 kwargs_list=[step_kwargs] * self.num_proposals,
                                 max_workers=num_threads,
-                                description=f"Generating {self.num_proposals} proposals")  # async step        
+                                description=f"Generating {self.num_proposals} proposals")  # async step
         # Validate the proposals
         candidates = []
         backup_dict = {p: copy.deepcopy(p.data) for p in self.agent.parameters()}  # backup the current value
