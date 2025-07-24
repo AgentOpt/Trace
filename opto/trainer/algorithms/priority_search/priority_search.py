@@ -280,7 +280,7 @@ class PrioritySearch(SearchTemplate):
         update_dicts = async_run([_step]*n_subgraphs*n_proposals,  # run the optimizer step for each agent in parallel
                                   args_list=args_list,
                                   max_workers=self.num_threads,  # use the number of threads specified in the class
-                                  description=f"Running optimizers to generate {n_proposals} proposals for each of {n_subgraphs} sub batches",)
+                                  description=f"Calling optimizers: Generating {n_proposals} proposals for each of {n_subgraphs} sub batches",)
 
         # update_dicts is a list of dicts of length n_agents * n_proposals
         # Create ModuleCandidate objects for each proposed update_dict
@@ -307,7 +307,7 @@ class PrioritySearch(SearchTemplate):
             self.validate_sampler.batch_size = len(validate_dataset['inputs'])  # set the batch size to the number of inputs in the validation dataset
 
         candidate_agents = [c.get_module() for c in candidates]  # get the modules from the candidates
-        validate_samples = Samples(*self.validate_sampler.sample(candidate_agents))  # list of RolloutsGraph objects
+        validate_samples = Samples(*self.validate_sampler.sample(candidate_agents, description_prefix='Validating newly proposed candidates: '))  # list of RolloutsGraph objects
 
 
         exploration_candidates = self._exploration_candidates  # exploration candidates from the previous iteration
@@ -319,7 +319,7 @@ class PrioritySearch(SearchTemplate):
             else:  # validate the agents in the validate_dataset
                 # exploration_agents = [rollouts.module for rollouts in samples.samples]  # NOTE this might contain some duplicates due to sub_batch_size < batch_size
                 exploitation_agents = [c.get_module() for c in exploration_candidates]  # get the modules from the exploration candidates
-                exploration_samples = Samples(*self.validate_sampler.sample(exploration_agents))  # sample the exploration agents
+                exploration_samples = Samples(*self.validate_sampler.sample(exploration_agents, description_prefix='Validating exploration candidates: '))  # sample the exploration agents
                 validate_samples.add_samples(exploration_samples)  # append the exploration samples to the validate_samples
 
 

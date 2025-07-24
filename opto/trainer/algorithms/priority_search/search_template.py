@@ -175,7 +175,7 @@ class SearchTemplate(Minibatch):
             agents (list): A list of trace.Modules (proposed parameters) to evaluate.
                 **kwargs: Additional keyword arguments that may be used by the implementation.
         """
-        samples = Samples(*self.train_sampler.sample(agents))  # create a Samples object to store the samples and the minibatch
+        samples = Samples(*self.train_sampler.sample(agents, description_prefix='Sampling training minibatch: '))  # create a Samples object to store the samples and the minibatch
         # Log information about the sampling
         scores = [ g.get_scores() for g in samples.samples]  # list of list of scores for each RolloutsGraph
         scores = [item for sublist in scores for item in sublist]  # flatten the list of scores
@@ -199,7 +199,7 @@ class SearchTemplate(Minibatch):
         # Test the agent's performance
         test_score = self.evaluate(self.agent, guide, test_dataset['inputs'], test_dataset['infos'],
                           min_score=min_score, num_threads=self.num_threads,
-                          description=f"Evaluating agent (iteration {self.n_iters})")  # and log
+                          description=f"Evaluating agent")  # and log
         return {'test_score': test_score}
 
     def save(self, save_path):

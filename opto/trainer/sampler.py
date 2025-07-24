@@ -234,12 +234,11 @@ class Sampler:
         """ Get the number of epochs of the loader. """
         return self.loader.n_epochs
 
-    def sample(self, agents):
+    def sample(self, agents, description_prefix=''):
         """ Sample a batch of data from the loader and evaluate the agents.
 
         Args:
             agents (list): A list of trace.Modules (proposed parameters) to evaluate.
-            **kwargs: Additional keyword arguments that may be used by the implementation.
 
         Returns:
            batch (dict):
@@ -303,7 +302,7 @@ class Sampler:
                 configs.append(RolloutConfig(module=agent, xs=_xs, infos=_infos, guide=self.guide))
 
         # Sample rollouts using the configs
-        description = f"Sampling {len(agents)} agents on {batch_size} inputs"
+        description = description_prefix + f"Sampling {len(agents)} agents on {batch_size} inputs"
         samples = sample_rollouts(configs,
                         forward=self.forward,
                         num_threads=self.num_threads,
