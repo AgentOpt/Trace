@@ -62,7 +62,7 @@ class PrioritySearch(_PrioritySearch):
     # This class is for testing the PrioritySearch algorithm
 
     def propose(self, samples, verbose=False, n_proposals=1, **kwargs):
-        print("Propose at iteration:", self.n_iters)
+        print("[UnitTest] Propose at iteration:", self.n_iters)
         # assert len(samples) == batch_size, f"Expected {batch_size} samples, got {len(samples)}"
         # assert len(samples) == len(agents) * np.ceil(batch_size / self.sub_batch_size), f"Expected {len(agents) * np.ceil(batch_size / self.sub_batch_size)} samples, got {len(samples)}"
 
@@ -74,7 +74,7 @@ class PrioritySearch(_PrioritySearch):
         return candidates
 
     def validate(self, candidates, samples, verbose=False, **kwargs):
-        print("Validate at iteration:", self.n_iters)
+        print("[UnitTest] Validate at iteration:", self.n_iters)
         assert len(candidates) == np.ceil(batch_size / sub_batch_size) * self.num_proposals, f"Expected {np.ceil(batch_size / sub_batch_size) * self.num_proposals} candidates, got {len(candidates)}"
 
         validate_results = super().validate(candidates, samples, verbose=verbose, **kwargs)
@@ -87,15 +87,14 @@ class PrioritySearch(_PrioritySearch):
         return validate_results
 
     def exploit(self, **kwargs):
-        print("Exploit at iteration:", self.n_iters)
-
+        print("[UnitTest] Exploit at iteration:", self.n_iters)
         candidate, info_dict = super().exploit(**kwargs)
         assert isinstance(candidate, ModuleCandidate), "Expected candidate to be an instance of ModuleCandidate"
         assert isinstance(info_dict, dict), "Expected info_dict to be a dictionary"
         return candidate, info_dict
 
     def explore(self, **kwargs):
-        print("Explore at iteration:", self.n_iters)
+        print("[UnitTest] Explore at iteration:", self.n_iters)
 
         candidates, info_dict = super().explore(**kwargs)
         assert isinstance(candidates, list)
@@ -107,7 +106,6 @@ class PrioritySearch(_PrioritySearch):
             num_candidates = min(self.num_candidates, 2)  # in this example, memory will contain at most 2 unique candidates
             assert len(candidates) == num_candidates, f"Expected {num_candidates} candidates at iter {self.n_iters}, got {len(candidates)}"
         assert all(isinstance(c, ModuleCandidate) for c in candidates), "All candidates should be ModuleCandidate instances"
-
         return candidates, info_dict
 
 
@@ -133,26 +131,31 @@ def _llm_callable(messages, **kwargs):
     </variable>
     """
 
-dummy_llm = DummyLLM(_llm_callable)
-agent = Agent()
-optimizer = OptoPrimeV2(
-    agent.parameters(),
+def test_priority_search():
+    """
+    Test the PrioritySearch algorithm with a dummy LLM and a simple agent.
+    """
+    # Create a dummy LLM and an agent
+    dummy_llm = DummyLLM(_llm_callable)
+    agent = Agent()
+    optimizer = OptoPrimeV2(
+        agent.parameters(),
     llm=dummy_llm,
-)
+    )
 
-algo = PrioritySearch(
-    agent,
-    optimizer,
-)
+    algo = PrioritySearch(
+        agent,
+        optimizer,
+    )
 
-algo.train(
-    guide=Guide(),
-    train_dataset=dataset,
-    batch_size=batch_size,
-    sub_batch_size=sub_batch_size,
-    num_threads=num_threads,
-    num_candidates=num_candidates,
-    num_proposals=num_proposals,
-    memory_size=memory_size,
-    verbose=False,
-)
+    algo.train(
+        guide=Guide(),
+        train_dataset=dataset,
+        batch_size=batch_size,
+        sub_batch_size=sub_batch_size,
+        num_threads=num_threads,
+        num_candidates=num_candidates,
+        num_proposals=num_proposals,
+        memory_size=memory_size,
+        verbose=False, #'output',
+    )
