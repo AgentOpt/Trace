@@ -48,6 +48,11 @@ class Samples:
     def __len__(self):
         return sum(len(s) for s in self.samples)
 
+    @property
+    def n_sub_batches(self) -> int:
+        """ Number of sub-batches in the samples. """
+        return len(self.samples)
+
 
 
 class SearchTemplate(Minibatch):
@@ -171,7 +176,6 @@ class SearchTemplate(Minibatch):
                 **kwargs: Additional keyword arguments that may be used by the implementation.
         """
         samples = Samples(*self.train_sampler.sample(agents))  # create a Samples object to store the samples and the minibatch
-
         # Log information about the sampling
         scores = [ g.get_scores() for g in samples.samples]  # list of list of scores for each RolloutsGraph
         scores = [item for sublist in scores for item in sublist]  # flatten the list of scores

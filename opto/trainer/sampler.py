@@ -310,4 +310,5 @@ class Sampler:
                         min_score=self.score_range[0],
                         description=description)
 
+        assert len(samples) == len(agents)*(batch_size // self.sub_batch_size + (1 if batch_size % self.sub_batch_size > 0 else 0)), f"Expected {len(agents)*(batch_size // self.sub_batch_size + (1 if batch_size % self.sub_batch_size > 0 else 0))} samples, got {len(samples)}"
         return samples, batch

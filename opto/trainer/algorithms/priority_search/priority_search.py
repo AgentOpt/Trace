@@ -235,7 +235,7 @@ class PrioritySearch(SearchTemplate):
         Returns:
             candidates (list of ModuleCandidate): A list of proposed candidates for the next iteration.
         """
-
+        print("--- Proposing new parameters...") if verbose else None
         assert isinstance(samples, Samples), "samples must be an instance of Samples."
         samples = samples.samples  # list of RolloutsGraph objects
         n_proposals = self.num_proposals  # number of proposals to generate per optimizer
@@ -276,10 +276,11 @@ class PrioritySearch(SearchTemplate):
             return update_dict  # return the proposed parameters
 
         args_list = [(o,) for o in optimizers ] * n_proposals  # repeat args_list n_proposals times
+        assert len(args_list) == n_subgraphs * n_proposals, "args_list must have length n_subgraphs * n_proposals"
         update_dicts = async_run([_step]*n_subgraphs*n_proposals,  # run the optimizer step for each agent in parallel
                                   args_list=args_list,
                                   max_workers=self.num_threads,  # use the number of threads specified in the class
-                                  description="Running optimizers on samples")
+                                  description=f"Running optimizers to generate {n_proposals} proposals for each of {n_subgraphs} sub batches",)
 
         # update_dicts is a list of dicts of length n_agents * n_proposals
         # Create ModuleCandidate objects for each proposed update_dict
@@ -296,6 +297,7 @@ class PrioritySearch(SearchTemplate):
         Returns:
             results (dict): A dictionary where the keys are ids of ModuleCandidate objects and the values are ModuleCandidate and lists of rollouts (list of dicts) containing the module, x, info, target, score, feedback.
         """
+        print("--- Validating candidates...") if verbose else None
 
         # Get the validation dataset from the samples. If no validation dataset is provided, use the current batch.
         if self._validate_dataset is None:
@@ -358,19 +360,20 @@ class PrioritySearch(SearchTemplate):
 
 
 
-    def update_memory(self, validate_results, **kwargs):
+    def update_memory(self, validate_results, verbose: bool = False, **kwargs):
         """ Update the priority queue with the validation results.
         Args:
             validate_results (dict): A dictionary where the keys are ModuleCandidate objects and the values are lists of rollouts (list of dicts) containing the module, x, info, target, score, feedback.
             **kwargs: Additional keyword arguments that may be used by the implementation.
         """
+        print("--- Updating memory with validation results...") if verbose else None
         for candidate, rollouts in validate_results.items():
             candidate.add_rollouts(rollouts)  # add the rollouts to the candidate
             score = self.compute_score(candidate)  # compute the score for the candidate
             self.memory.push(score, candidate)
 
     ####
-    def explore(self, **kwargs):
+    def explore(self, verbose: bool = False, **kwargs):
         """ Explore the parameter space and propose new candidates.
         Args:
             **kwargs: Additional keyword arguments that may be used by the implementation.
@@ -378,6 +381,7 @@ class PrioritySearch(SearchTemplate):
             list: A list of proposed candidates.
             dict: A dictionary containing logging information about the exploration.
         """
+        print(f"--- Generating {min(len(self.memory), self.num_candidates)} exploration candidates...") if verbose else None
         # pop top self.num_candidates candidates from the priority queue
         top_candidates = []
         while len(top_candidates) < self.num_candidates and self.memory:
@@ -386,7 +390,7 @@ class PrioritySearch(SearchTemplate):
         return top_candidates, {}
 
 
-    def exploit(self, **kwargs):
+    def exploit(self, verbose: bool = False, **kwargs):
         # NOTE This function can be overridden by subclasses to compute a different score
         """ Exploit the best candidate from the priority queue. This method should not change the priority queue.
         Args:
@@ -394,6 +398,7 @@ class PrioritySearch(SearchTemplate):
         Returns:
             ModuleCandidate: The best candidate from the priority queue.
         """
+        print("--- Exploiting the best candidate...") if verbose else None
         # Right now, we just return the best candidate from the priority queue
         # This function can be overridden by subclasses to implement a different exploitation strategy
         if not self.memory:

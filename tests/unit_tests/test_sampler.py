@@ -2,7 +2,7 @@ from opto import trace
 from opto.trainer.sampler import Sampler
 from opto.trainer.loader import DataLoader
 from opto.trainer.guide import AutoGuide
-from opto.trainer.algorithms.search_algorithms import is_node_copy
+from opto.trainer.algorithms.priority_search.utils import is_node_copy
 
 
 class Guide(AutoGuide):
