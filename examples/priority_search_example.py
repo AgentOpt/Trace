@@ -54,11 +54,14 @@ def main():
     # set seed
     seed = 42
     num_epochs = 1
-    batch_size = 3
-    sub_batch_size = 2
+    batch_size = 3  # number of queries to sample from the training data
+    sub_batch_size = 2  # number of queries each optimizer sees
+    num_proposals = 3  # number of proposals to generate for each query
+    num_candidates = 2  # number of candidates for exploration
     score_range = (0, 1)  # range of the score for the guide
     eval_frequency = -1
     num_eval_samples = 2
+
     num_threads = 10
     datasize = 5
     verbose = True
@@ -66,12 +69,13 @@ def main():
     student_model = None  # use default model
     optimizer_model = None  # use default model
 
+
     np.random.seed(seed)
 
     # In this example, we use the GSM8K dataset, which is a dataset of math word problems.
     # We will look the training error of the agent on a small portion of this dataset.
-    train_dataset = datasets.load_dataset('openai/gsm8k', 'main')['train'][:datasize]
-    train_dataset = dict(inputs=train_dataset['question'], infos=train_dataset['answer'])
+    train_dataset = datasets.load_dataset('BBEH/bbeh')['train'][:datasize]
+    train_dataset = dict(inputs=train_dataset['input'], infos=train_dataset['target'])
     test_dataset = train_dataset
 
     agent = Learner(llm=LLM(student_model))
@@ -93,6 +97,8 @@ def main():
               test_dataset=test_dataset,
               num_threads=num_threads,
               sub_batch_size=sub_batch_size,
+              num_proposals=num_proposals,
+              num_candidates=num_candidates,
               score_range=score_range,
               num_eval_samples=num_eval_samples,
               verbose='output' if verbose else False)
