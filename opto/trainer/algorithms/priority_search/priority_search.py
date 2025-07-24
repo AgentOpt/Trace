@@ -11,7 +11,6 @@ from opto.trainer.algorithms.priority_search.search_template import SearchTempla
 from opto.trainer.algorithms.priority_search.utils import set_module_parameters, remap_update_dict, create_module_from_update_dict
 
 
-# TODO make this hashable?
 class ModuleCandidate:
     """ A container used by PrioritySearch to store a candidate module as (its base module and update dictionary) and its statistics. """
 
@@ -138,7 +137,21 @@ class HeapMemory:
 
 
 class PrioritySearch(SearchTemplate):
-    """ A search algorithm that uses a priority queue to explore the parameter space and propose new candidates. """
+    """ A search algorithm that uses a priority queue to explore the parameter space and propose new candidates.
+
+        It provides a scalable template for implementing search algorithms based on asynchronous generation, validation, and testing.
+        In each iteration,
+            1. It proposes a best agent and a set of `num_candidates` exploration agents that have the highest scores in the priority queue.
+            2. The best agent is tested for performance if eval_frequency is met.
+            3. A minibatch of `batch_size` samples are drawn from the training dataset, and the exploration agents are run on the samples. This creates a set of agent rollouts, where each rollout contains the agent module, input, info, target, score, and feedback. For each agent, rollouts of size `sub_batch_size` are grouped together as a connected subgraph (represented as the RolloutsGraph object). In total, this step creates `num_subgraphs = num_candidates * ceil(batch_size / sub_batch_size)` subgraphs.
+            4. Optimizer is run on each subgraph to propose new parameters for the agents. `num_proposals` proposals are generated for each subgraph. This results in `num_subgraphs * num_proposals` total proposals.
+            5. The proposed parameters are validated by running the agents on the validation dataset, which can be the current batch or a separate validation dataset when provided. When validate_proposals is set to True, the exploration candidates are also validated.
+            6. The validation results are used to update the priority queue, which stores the candidates and their scores. The candidates are stored as ModuleCandidate objects, which contain the base module, update dictionary, and rollouts (i.e. raw statistics of the candidate).
+
+        This algorithm template can be subclassed to implement specific search algorithms by overriding the `exploit`, `explore`, and `compute_score` methods.
+        The `exploit` method is used to select the best candidate from the priority queue, the `explore` method is used to generate new candidates from the priority queue, and
+        the `compute_score` method is used to compute the score for ranking in the priority queue.
+    """
 
     def train(self,
               guide, # guide to provide feedback
