@@ -382,6 +382,11 @@ class ModuleCandidate:
         scores = [r['score'] for r in self.rollouts]
         return np.mean(scores) if scores else None
 
+    @property
+    def num_rollouts(self):
+        """ Return the number of rollouts collected for this candidate. """
+        return len(self.rollouts)
+
 class HeapMemory:
     # This is a basic implementation of a heap memory that uses a priority queue to store candidates.
     # Later on this will be replaced by a memory DB.
