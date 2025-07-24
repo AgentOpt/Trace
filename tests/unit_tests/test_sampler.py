@@ -66,6 +66,8 @@ def test_sample_with_single_agent():
     for rollouts in samples:
         for rollout in rollouts:
             assert rollout.target == 1  # state is not affected by multiple calls
+            rollout.target.backward('Fake feedback')
+            # each rollout should be independent so `has been backwarded.` error should not be raised
 
 
     samples, batch = sampler.sample([Agent()])
@@ -79,7 +81,8 @@ def test_sample_with_single_agent():
     for rollouts in samples:
         for rollout in rollouts:
             assert rollout.target == 1  # state is not affected by multiple calls
-
+            rollout.target.backward('Fake feedback')
+            # each rollout should be independent so `has been backwarded.` error should not be raised
 
 def test_sample_with_multiple_agents():
     """
@@ -116,7 +119,8 @@ def test_sample_with_multiple_agents():
 
     for rollouts in samples:
         for rollout in rollouts:
-            assert rollout.target == 1  # state is not affected by multiple calls
+            rollout.target.backward('Fake feedback')
+            # each rollout should be independent so `has been backwarded.` error should not be raised
 
     samples, batch = sampler.sample([Agent(), Agent()])
     # check batch is equal to dataset's second batch_size elements
@@ -130,4 +134,5 @@ def test_sample_with_multiple_agents():
 
     for rollouts in samples:
         for rollout in rollouts:
-            assert rollout.target == 1  # state is not affected by multiple calls
+            rollout.target.backward('Fake feedback')
+            # each rollout should be independent so `has been backwarded.` error should not be raised
