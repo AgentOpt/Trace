@@ -2,8 +2,8 @@ import datasets
 import numpy as np
 from opto import trace
 from opto.utils.llm import LLM, LiteLLM
-from opto.optimizers import OptoPrime
-from opto.trainer.algorithms.search_algorithms import PrioritySearch as SearchAlgorithm
+from opto.optimizers import OptoPrimeV2 as OptoPrime
+from opto.trainer.algorithms.priority_search import PrioritySearch as SearchAlgorithm
 from opto.trainer.loggers import TensorboardLogger
 from opto.trainer.guide import VerbalJudgeGuide
 from typing import Any

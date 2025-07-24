@@ -1,15 +1,9 @@
 import numpy as np
 import copy
-import heapq
 from dataclasses import dataclass
 from typing import Union, List, Tuple, Dict, Any, Optional
 from opto import trace
-from opto.trace.nodes import ParameterNode
-from opto.trainer.utils import async_run, batch_run
-from opto.optimizers.utils import print_color
-from opto.trainer.algorithms.basic_algorithms import Minibatch, AlgorithmBase, batchify
-from opto.trainer.evaluators import evaluate
-from opto.trainer.loader import DataLoader
+from opto.trainer.utils import batch_run
 from opto.trainer.guide import AutoGuide
 
 @dataclass

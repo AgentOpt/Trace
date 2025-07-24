@@ -1,8 +1,8 @@
 from opto import trace
 from opto.trainer.loader import DataLoader
 from opto.trainer.sampler import Sampler
-from opto.trainer.algorithms.search_algorithms import PrioritySearch as _PrioritySearch
-from opto.trainer.algorithms.search_algorithms import ModuleCandidate
+from opto.trainer.algorithms.priority_search.priority_search import PrioritySearch as _PrioritySearch
+from opto.trainer.algorithms.priority_search.priority_search import ModuleCandidate
 from opto.optimizers import OptoPrimeV2
 from opto.trainer.guide import AutoGuide
 from opto.utils.llm import DummyLLM
@@ -46,7 +46,7 @@ xs = [1, 2, 3, 4, 5]
 infos = [1, 2, 3, 4, 5]
 batch_size = 3
 sub_batch_size = 2
-num_threads = 1 # 2
+num_threads = 2 # 2
 dataset = {'inputs': xs, 'infos': infos}
 loader = DataLoader(dataset, batch_size=batch_size, randomize=False)
 sampler = Sampler(loader=loader, guide=Guide(), sub_batch_size=sub_batch_size, num_threads=num_threads)
