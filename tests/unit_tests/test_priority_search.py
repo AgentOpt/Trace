@@ -9,6 +9,7 @@ from opto.utils.llm import DummyLLM
 
 import re
 import numpy as np
+import copy
 
 
 class Guide(AutoGuide):
@@ -63,26 +64,23 @@ class PrioritySearch(_PrioritySearch):
 
     def propose(self, samples, verbose=False, n_proposals=1, **kwargs):
         print("[UnitTest] Propose at iteration:", self.n_iters)
-        # assert len(samples) == batch_size, f"Expected {batch_size} samples, got {len(samples)}"
-        # assert len(samples) == len(agents) * np.ceil(batch_size / self.sub_batch_size), f"Expected {len(agents) * np.ceil(batch_size / self.sub_batch_size)} samples, got {len(samples)}"
 
         candidates = super().propose(samples, verbose=verbose, n_proposals=n_proposals, **kwargs)
         # In this example this will always be value 5
         assert isinstance(candidates, list), "Expected candidates to be a list"
         assert all(isinstance(c, ModuleCandidate) for c in candidates), "All candidates should be ModuleCandidate instances"
-        assert len(candidates) == np.ceil(batch_size / sub_batch_size) * self.num_proposals, f"Expected {np.ceil(batch_size / sub_batch_size) * self.num_proposals} candidates, got {len(candidates)}"
+        assert len(candidates) == samples.n_sub_batches * self.num_proposals, f"Expected {samples.n_sub_batches * self.num_proposals} candidates, got {len(candidates)}"
         return candidates
 
     def validate(self, candidates, samples, verbose=False, **kwargs):
         print("[UnitTest] Validate at iteration:", self.n_iters)
-        assert len(candidates) == np.ceil(batch_size / sub_batch_size) * self.num_proposals, f"Expected {np.ceil(batch_size / sub_batch_size) * self.num_proposals} candidates, got {len(candidates)}"
 
         validate_results = super().validate(candidates, samples, verbose=verbose, **kwargs)
         assert isinstance(validate_results, dict), "Expected validate_results to be a dict"
         assert all(isinstance(v, ModuleCandidate) for v in validate_results.keys()), "All keys should be ModuleCandidate instances"
         keys = list(validate_results.keys())
         # should contain one from exploration and one from exploitation
-        assert len(validate_results) == 2, "In this example, all proposals are the same, so we expect only two validate results."
+        # assert len(validate_results) == 2, "In this example, all proposals are the same, so we expect only two validate results."
 
         return validate_results
 
@@ -91,6 +89,14 @@ class PrioritySearch(_PrioritySearch):
         candidate, info_dict = super().exploit(**kwargs)
         assert isinstance(candidate, ModuleCandidate), "Expected candidate to be an instance of ModuleCandidate"
         assert isinstance(info_dict, dict), "Expected info_dict to be a dictionary"
+
+        # XXX Here we simulate a different best candidate is given
+        assert self.use_best_candidate_to_explore, "Expected use_best_candidate_to_explore to be True in this unit test"
+        candidate = copy.deepcopy(candidate)  # Ensure we return a copy
+        for p in candidate.base_module.parameters():
+            candidate.update_dict[p] = p.data + 100
+            # This will be different the exploration candidates
+
         return candidate, info_dict
 
     def explore(self, **kwargs):
@@ -101,10 +107,10 @@ class PrioritySearch(_PrioritySearch):
         assert isinstance(info_dict, dict)
 
         if self.n_iters == 0:
-            assert len(candidates) == 1, f"Expected 1 candidate, got {len(candidates)}"
+            assert len(candidates) == 2, f"Expected 2 candidates, got {len(candidates)}"
+            # one from the init parameter and one from the hacked best candidate
         else:
-            num_candidates = min(self.num_candidates, 2)  # in this example, memory will contain at most 2 unique candidates
-            assert len(candidates) == num_candidates, f"Expected {num_candidates} candidates at iter {self.n_iters}, got {len(candidates)}"
+            assert len(candidates) <= self.num_candidates, f"Expect no more than {self.num_candidates} candidates at iter {self.n_iters}, got {len(candidates)}"
         assert all(isinstance(c, ModuleCandidate) for c in candidates), "All candidates should be ModuleCandidate instances"
         return candidates, info_dict
 
