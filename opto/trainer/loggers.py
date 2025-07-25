@@ -1,4 +1,5 @@
-
+from typing import Optional
+from opto.trainer.trace_memory_db import TraceMemoryDB
 
 class BaseLogger:
 
@@ -118,5 +119,48 @@ class WandbLogger(ConsoleLogger):
             # For numeric data, log as scalar
             self.wandb.log({name: data}, step=step)
 
+class TraceMemoryLogger(ConsoleLogger):
+    """A logger that writes metrics to TraceMemoryDB."""
+    
+    def __init__(self, log_dir='./logs', verbose=True, memory_db: Optional[TraceMemoryDB] = None, 
+                 problem_id: str = "training_run", **kwargs):
+        super().__init__(log_dir, **kwargs)
+        self.verbose = verbose
+        self.memory_db = memory_db or TraceMemoryDB()
+        self.problem_id = problem_id
+        
+    def log(self, name, data, step, **kwargs):
+        """Log a message to TraceMemoryDB.
+        
+        Args:
+            name: Name of the metric
+            data: Value of the metric
+            step: Current step/iteration
+            **kwargs: Additional arguments (e.g., color, metadata)
+        """
+        if self.verbose:
+            super().log(name, data, step, **kwargs)
+        
+        # Extract metadata from kwargs
+        metadata = kwargs.get('metadata', {})
+        metadata['metric_name'] = name
+        metadata['color'] = kwargs.get('color', None)
+        
+        # Determine data_payload based on metric name
+        if 'score' in name.lower():
+            data_payload = 'score'
+        elif 'loss' in name.lower():
+            data_payload = 'loss'
+        else:
+            data_payload = 'metric'
+            
+        # Log to memory database
+        self.memory_db.log_data(
+            problem_id=self.problem_id,
+            step_id=step,
+            data={name: data},
+            data_payload=data_payload,
+            metadata=metadata
+        )
 
 DefaultLogger = ConsoleLogger
