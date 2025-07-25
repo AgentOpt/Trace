@@ -61,6 +61,7 @@ def main():
     score_range = (0, 1)  # range of the score for the guide
     eval_frequency = -1
     num_eval_samples = 2
+    score_function = 'mean'
 
     num_threads = 10
     datasize = 5
@@ -101,6 +102,7 @@ def main():
               num_candidates=num_candidates,
               score_range=score_range,
               num_eval_samples=num_eval_samples,
+              score_function=score_function,
               verbose='output' if verbose else False)
 
 

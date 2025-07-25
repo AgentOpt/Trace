@@ -92,14 +92,18 @@ class SearchTemplate(Minibatch):
         test_dataset = test_dataset or train_dataset  # default to train_dataset if test_dataset is not provided
         test_guide = test_guide or guide
         self.num_eval_samples = num_eval_samples  # number of samples to use to evaluate each input
-        self.score_range = score_range or (-np.inf, np.inf)
+        if score_range is None:
+            score_range = (-np.inf, np.inf)
+        assert len(score_range) == 2, "score_range must be a tuple (min_score, max_score)."
+        assert score_range[1] >= score_range[0], "score_range must be a tuple (min_score, max_score) with min_score <= max_score."
+        self._score_range = score_range  # range of the score for the guide
 
         self.train_sampler = Sampler(
             DataLoader(train_dataset, batch_size=batch_size),
             guide,
             num_threads=self.num_threads,
             sub_batch_size=sub_batch_size,
-            score_range=self.score_range
+            score_range=self._score_range
         )
         self._validate_dataset = validate_dataset  # if None, the current batch will be used for validation
         self.validate_sampler = Sampler(
@@ -107,7 +111,7 @@ class SearchTemplate(Minibatch):
             validate_guide or guide,
             num_threads=self.num_threads,
             sub_batch_size=None,  # no sub-batch size for validation
-            score_range=self.score_range
+            score_range=self._score_range
         )
 
         # Evaluate the agent before learning
@@ -167,6 +171,16 @@ class SearchTemplate(Minibatch):
             self.n_iters += 1
         return
 
+    @property
+    def max_score(self):
+        """ Maximum score that can be achieved by the agent. """
+        return self._score_range[1]
+
+    @property
+    def min_score(self):
+        """ Minimum score that can be achieved by the agent. """
+        return self._score_range[0]
+
     # Can be overridden by subclasses to implement specific sampling strategies
     def sample(self, agents, verbose=False, **kwargs):
         """ Sample a batch of data based on the proposed parameters. All proposals are evaluated on the same batch of inputs.
@@ -183,6 +197,10 @@ class SearchTemplate(Minibatch):
             'mean_score': np.mean(scores),
             'n_epochs': self.train_sampler.n_epochs,
         }
+        # check if the scores are within the score range
+        if not (self.min_score <= log_info['mean_score'] <= self.max_score):
+            print(f"Warning: Mean score {log_info['mean_score']} is out of the range {self._score_range}.")
+
         return samples, log_info
 
     def log(self, info_log, prefix=""):
@@ -195,11 +213,14 @@ class SearchTemplate(Minibatch):
                 print(e)
 
     def test(self, test_dataset, guide):
-        min_score = self.score_range[0]
+        min_score = self.min_score
         # Test the agent's performance
         test_score = self.evaluate(self.agent, guide, test_dataset['inputs'], test_dataset['infos'],
                           min_score=min_score, num_threads=self.num_threads,
                           description=f"Evaluating agent")  # and log
+        # check if the test_score is within the score range
+        if not (self.min_score <= test_score <= self.max_score):
+            print(f"Warning: Test score {test_score} is out of the range {self._score_range}.")
         return {'test_score': test_score}
 
     def save(self, save_path):

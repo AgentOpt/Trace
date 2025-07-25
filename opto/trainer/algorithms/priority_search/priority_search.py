@@ -30,6 +30,9 @@ class ModuleCandidate:
         self.update_dict = remap_update_dict(self.base_module, self.update_dict)
         self.rollouts = []  # list of dicts containing the rollout information (not RolloutsGraph, but a list of dicts)
         self.created_time = time.time()
+        self._n_updates = 0  # number of times this candidate has been updated
+        self._n_confidence_queries = 1  # number of times the confidence score has been queried
+        self._confidence_interval = None
 
     def get_module(self):
         """ Apply the update_dict to the base_module and return the updated module.
@@ -81,18 +84,77 @@ class ModuleCandidate:
             "Each rollout must contain 'module', 'x', 'info', 'target', 'score', and 'feedback' keys."
 
         self.rollouts.extend(rollouts)
+        self._confidence_interval = None  # reset the confidence interval
+        self._n_updates += 1  # increment the number of updates
 
-    def score(self):
+    def mean_score(self):
         """ Compute the score of the candidate based on the rollouts. """
         if not self.rollouts:
             return None
         scores = [r['score'] for r in self.rollouts]
         return np.mean(scores) if scores else None
 
+    def compute_score_confidence(self, min_score, max_score, scaling_constant=1.0):
+        """Compute the UCB, mean, LCB score for the candidate. After queried, the number of confidence queries is incremented.
+
+        UCB = mean_score + scaling_constant * sqrt(ln(total_trials) / candidate_trials) * (max_score - min_score)
+        UCB = clip(UCB, min_score, max_score)
+
+        LCB = mean_score - scaling_constant * sqrt(ln(total_trials) / candidate_trials) * (max_score - min_score)
+        LCB = clip(LCB, min_score, max_score)
+
+        Args:
+            candidate (ModuleCandidate): The candidate for which to compute the UCB score.
+        Returns:
+            float: The computed UCB score for the candidate.
+        """
+        # Get scores from rollouts
+        scores = [r['score'] for r in self.rollouts]
+
+        # If no rollouts, return a high exploration score to encourage trying this candidate
+        if not scores:
+            return min_score, None, max_score
+
+        # Calculate mean score for this candidate
+        mean_score = np.mean(scores)
+        candidate_trials = len(scores)
+
+        # Calculate how many times the confidence interval has been used to form a union bound
+        total_trials = min(self._n_confidence_queries) + 1 # this is an upper bound, since log(1) = 0
+
+        # Compute the exploration term based on Hoeffding's inequality
+        exploration_term = scaling_constant * np.sqrt(np.log(total_trials) / candidate_trials) * (max_score - min_score)
+
+        # Calculate UCB score
+        ucb_score = mean_score + exploration_term
+        ucb_score = np.clip(ucb_score, min_score, max_score)
+
+        # Calculate LCB score
+        lcb_score = mean_score - exploration_term
+        lcb_score = np.clip(lcb_score, min_score, max_score)
+
+        self._n_confidence_queries += 1  # increment the number of confidence queries
+
+        self._confidence_interval = dict(lcb_score=lcb_score, ucb_score=ucb_score, mean_score=mean_score)
+        return lcb_score, mean_score, ucb_score
+
+    @property
+    def confidence_interval(self):
+        # This is a cached property that returns the confidence interval of the candidate.
+        # This is for accessing the confidence interval without increasing the number of confidence queries. E.g. this is useful when using both LCB and UCB of the same candidate.
+        if self._confidence_interval is None:
+            raise ValueError("Confidence interval has not been computed yet. Call compute_score_confidence() first.")
+        return self._confidence_interval
+
     @property
     def num_rollouts(self):
         """ Return the number of rollouts collected for this candidate. """
         return len(self.rollouts)
+
+    @property
+    def n_updates(self):
+        """ Return the number of times this candidate has been updated. """
+        return self._n_updates
 
 class HeapMemory:
     # This is a basic implementation of a heap memory that uses a priority queue to store candidates.
@@ -148,11 +210,11 @@ class PrioritySearch(SearchTemplate):
             5. The proposed parameters are validated by running the agents on the validation dataset, which can be the current batch or a separate validation dataset when provided. When validate_proposals is set to True, the exploration candidates are also validated.
             6. The validation results are used to update the priority queue, which stores the candidates and their scores. The candidates are stored as ModuleCandidate objects, which contain the base module, update dictionary, and rollouts (i.e. raw statistics of the candidate).
 
-        This algorithm template can be subclassed to implement specific search algorithms by overriding the `exploit`, `explore`, and `compute_score` methods.
+        This algorithm template can be subclassed to implement specific search algorithms by overriding the `exploit`, `explore`, and `compute_priority` methods.
         The `exploit` method is used to select the best candidate from the priority queue, the `explore` method is used to generate new candidates from the priority queue, and
-        the `compute_score` method is used to compute the score for ranking in the priority queue.
+        the `compute_priority` method is used to compute the score for ranking in the priority queue.
 
-        By default, `compute_score` computes the mean score of the rollouts. `exploit` simply returns the best candidate from the priority queue, and `explore` generates the top `num_candidates` candidates from the priority queue.
+        By default, `compute_priority` computes the mean score of the rollouts. `exploit` simply returns the best candidate from the priority queue, and `explore` generates the top `num_candidates` candidates from the priority queue.
     """
 
     def train(self,
@@ -180,10 +242,11 @@ class PrioritySearch(SearchTemplate):
               # Priority Search specific parameters
               num_candidates: int = 10,  # number of candidates to propose for exploration
               num_proposals: int = 1,  # number of proposals to generate per optimizer
-              default_score: float = float('inf'),  # default score assigned to priority queue candidates
               validate_proposals: bool = True,  # whether to validate the proposed parameters for exploration
               use_best_candidate_to_explore: bool = True,  # whether to use the best candidate as part of the exploration candidates
               memory_size: Optional[int] = None,  # size of the heap memory to store the candidates; if None, no limit is set
+              score_function: str = 'mean',  # function to compute the score for the candidates; 'mean' or 'ucb'
+              ucb_exploration_constant: float = 1.0,  # exploration constant for UCB score function
               # Additional keyword arguments
               **kwargs
               ):
@@ -193,11 +256,18 @@ class PrioritySearch(SearchTemplate):
         self.num_proposals = num_proposals
         self.validate_proposals = validate_proposals  # whether to validate the proposed parameters
         self.use_best_candidate_to_explore = use_best_candidate_to_explore
-        self.default_score = default_score
-        self.memory = HeapMemory(size=memory_size)  # Initialize the heap memory with a size limit
-        self.memory.push(self.default_score, ModuleCandidate(self.agent))  # Push the base agent as the first candidate
+        self.score_function = score_function  # function to compute the score for the candidates
+        if score_function == 'ucb':  # this requires a bounded score range. By default, it is set to (0, 1)
+            if score_range is None:
+                score_range = (0, 1)
+            assert score_range[1]-score_range[0] < float('inf'), \
+                "For UCB score function, score_range must be finite. Use 'mean' score function if you want to use unbounded scores."
 
+        self.ucb_exploration_constant = 1.
         self._exploration_candidates = None
+
+        self.memory = HeapMemory(size=memory_size)  # Initialize the heap memory with a size limit
+
 
         super().train(guide, train_dataset,
                       validate_dataset=validate_dataset,
@@ -216,6 +286,7 @@ class PrioritySearch(SearchTemplate):
                       save_path=save_path,
                       **kwargs)
 
+
     def update(self, samples=None, verbose=False, **kwargs):
 
         if samples is not None:
@@ -225,6 +296,9 @@ class PrioritySearch(SearchTemplate):
             validate_results = self.validate(candidates, samples, verbose=verbose, **kwargs)  # this updates the priority queue
             # 3. Update the priority queue with the validation results
             self.update_memory(validate_results, verbose=verbose, **kwargs)  # samples are provided here in case candidates do not capture full information
+        else:
+            if len(self.memory) == 0:
+                self.memory.push(self.max_score, ModuleCandidate(self.agent))  # Push the base agent as the first candidate (This gives the initialization of the priority queue)
         # 4. Explore and exploit the priority queue
         self._best_candidate, info_exploit = self.exploit(verbose=verbose, **kwargs)  # get the best candidate (ModuleCandidate) from the priority queue
         self._exploration_candidates, info_explore = self.explore(verbose=verbose, **kwargs)  # List of ModuleCandidates
@@ -232,9 +306,9 @@ class PrioritySearch(SearchTemplate):
 
         # TODO Log information about the update
         info_log = {
-            'best_candidate_score': self._best_candidate.score(),
-            'num_exploration_candidates': len(self._exploration_candidates),
+            'n_iters': self.n_iters,  # number of iterations
         }
+
         info_log.update(info_exploit)  # add the info from the exploit step
         info_log.update(info_explore)  # add the info from the explore step
         return self._best_candidate.update_dict, [c.get_module() for c in self._exploration_candidates], info_log
@@ -374,7 +448,6 @@ class PrioritySearch(SearchTemplate):
         # For example, it copies candidates. This would create a bug.
         return results
 
-
     def update_memory(self, validate_results, verbose: bool = False, **kwargs):
         """ Update the priority queue with the validation results.
         Args:
@@ -384,8 +457,8 @@ class PrioritySearch(SearchTemplate):
         print("--- Updating memory with validation results...") if verbose else None
         for candidate, rollouts in validate_results.items():
             candidate.add_rollouts(rollouts)  # add the rollouts to the candidate
-            score = self.compute_score(candidate)  # compute the score for the candidate
-            self.memory.push(score, candidate)
+            priority = self.compute_priority(candidate)  # compute the priority for the candidate
+            self.memory.push(priority, candidate)
 
     ####
     def explore(self, verbose: bool = False, **kwargs):
@@ -399,13 +472,25 @@ class PrioritySearch(SearchTemplate):
         print(f"--- Generating {min(len(self.memory), self.num_candidates)} exploration candidates...") if verbose else None
         # pop top self.num_candidates candidates from the priority queue
         top_candidates = [self._best_candidate] if self.use_best_candidate_to_explore else []
+        priorities = []  # to store the priorities of the candidates
         while len(top_candidates) < self.num_candidates and self.memory:
-            score, candidate = self.memory.pop()  # pop the top candidate from the priority queue
+            priority, candidate = self.memory.pop()  # pop the top candidate from the priority queue
+            priority = - priority  # remember that we stored negative scores in the priority queue
+            priorities.append(priority)  # store the priority of the candidate
             if self.use_best_candidate_to_explore:
                 if candidate == self._best_candidate:  # skip if it is already in the top candidates
                     continue
             top_candidates.append(candidate)  # add the candidate to the top candidates
-        return top_candidates, {}
+
+        mean_scores = [c.mean_score() for c in top_candidates]
+        mean_scores = [ s for s in mean_scores if s is not None]  # filter out None scores
+        info_dict = {
+            'num_exploration_candidates': len(top_candidates),
+            'exploration_candidates_mean_priority': np.mean(priorities),  # list of priorities of the exploration candidates
+            'exploration_candidates_mean_score': np.mean(mean_scores),  # list of mean scores of the exploration candidates
+        }
+
+        return top_candidates, info_dict
 
 
     def exploit(self, verbose: bool = False, **kwargs):
@@ -421,16 +506,14 @@ class PrioritySearch(SearchTemplate):
         # This function can be overridden by subclasses to implement a different exploitation strategy
         if not self.memory:
             raise ValueError("The priority queue is empty. Cannot exploit.")
-        best = self.memory.best()  # (score, candidate)
-        score, best_candidate = best
-        score = -score # remember that we stored negative scores in the priority queue
+        priority, best_candidate = self.memory.best()  # (priority, candidate)
+        priority = - priority # remember that we stored negative scores in the priority queue
         return best_candidate, {
-            'best_candidate_score': score,  # remember that we stored negative scores in the priority queue
+            'best_candidate_priority': priority,  # remember that we stored negative scores in the priority queue
+            'best_candidate_mean_score': best_candidate.mean_score(),  # mean score of the candidate's rollouts
         }
 
-
-
-    def compute_score(self, candidate):
+    def compute_priority(self, candidate):
         # NOTE This function can be overridden by subclasses to compute a different score
         """ Compute the score for the candidate based on the rollouts during the validation phase.
         It can be overridden by subclasses to implement a different scoring strategy.
@@ -444,7 +527,16 @@ class PrioritySearch(SearchTemplate):
             raise TypeError("candidate must be an instance of ModuleCandidate.")
         # By default, we compute the mean score of the rollouts
 
-        scores = [r['score'] for r in candidate.rollouts]
-        default_score = self.default_score  if self.default_score is not None else self.score_range[1]  # default score for the candidates
-
-        return np.mean(scores) if scores else self.default_score
+        if self.score_function == 'mean':
+            # Compute the mean score of the candidate's rollouts
+            return candidate.mean_score()
+        elif self.score_function == 'ucb':
+            # Compute the Upper Confidence Bound (UCB) score
+            lcb_score, mean_score, ucb_score = candidate.compute_score_confidence(
+                min_score=self.min_score,
+                max_score=self.max_score,
+                scaling_constant=self.ucb_exploration_constant
+            )
+            return ucb_score  # return the UCB score
+        else:
+            raise ValueError(f"Unknown score function: {self.score_function}")
