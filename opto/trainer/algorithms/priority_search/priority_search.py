@@ -151,6 +151,8 @@ class PrioritySearch(SearchTemplate):
         This algorithm template can be subclassed to implement specific search algorithms by overriding the `exploit`, `explore`, and `compute_score` methods.
         The `exploit` method is used to select the best candidate from the priority queue, the `explore` method is used to generate new candidates from the priority queue, and
         the `compute_score` method is used to compute the score for ranking in the priority queue.
+
+        By default, `compute_score` computes the mean score of the rollouts. `exploit` simply returns the best candidate from the priority queue, and `explore` generates the top `num_candidates` candidates from the priority queue.
     """
 
     def train(self,
