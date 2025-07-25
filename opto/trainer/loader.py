@@ -5,12 +5,15 @@ import numpy as np
 
 class DataLoader:
 
-    def __init__(self, dataset, batch_size=1, replacement=False, shuffle=True):
+    def __init__(self, dataset, batch_size=1, randomize=True, replacement=False, shuffle=True):
         """ Initialize the data loader
 
         Args:
             dataset: the dataset to load (a dict of inputs and infos)
             batch_size: the number of samples to load in each batch
+            randomize: whether to randomize the dataset ordering before loading;
+                       if False, the dataset will be loaded in the order it is
+                       provided (replacement and shuffle be ignored)
             replacement: whether to sample with replacement
             shuffle: whether to shuffle the dataset after each epoch
         """
@@ -20,20 +23,42 @@ class DataLoader:
 
         self.dataset = dataset
         self.batch_size = batch_size
+        self.randomize = randomize
         self.replacement = replacement
         self.shuffle = shuffle
         self._indices = self._update_indices()
+        self.n_epochs = 0
+        self._i = 0
 
     def __iter__(self):
-        indices = self._indices
-        for i in range(0, len(indices), self.batch_size):
-            xs = [ self.dataset['inputs'][ind]  for ind in indices[i:i + self.batch_size] ]
-            infos = [self.dataset['infos'][ind] for ind in indices[i:i + self.batch_size] ]
-            yield xs, infos
+        return self
 
-        if self.shuffle:
-            self._indices = self._update_indices()
+    def __next__(self):
+        """ Get the next batch of data """
+        if self._i >= len(self._indices):
+            if self.shuffle:
+                self._indices = self._update_indices()
+            # Reset the index for the next epoch
+            self._i = 0
+            self.n_epochs += 1
+            raise StopIteration
+        indices = self._indices[self._i: min(self._i + self.batch_size, len(self._indices))]
+        xs = [self.dataset['inputs'][ind] for ind in indices]
+        infos = [self.dataset['infos'][ind] for ind in indices]
+        self._i += self.batch_size
+        return xs, infos
 
     def _update_indices(self):
         N = len(self.dataset['inputs'])
-        return np.random.choice(N, size=N, replace=self.replacement)
+        if self.randomize:
+            return np.random.choice(N, size=N, replace=self.replacement)
+        else:
+            return np.arange(N)
+
+    def sample(self):
+        """ Sample a batch of data from the dataset """
+        try:
+            xs, infos = next(self)
+            return xs, infos
+        except StopIteration:
+            return self.sample()

@@ -23,11 +23,11 @@ def node(data, name=None, trainable=False, description=None):
     Notes:
         If trainable=True:
             - If data is already a Node, extracts underlying data and updates name
-            - Creates ParameterNode with extracted data, name, trainable=True 
+            - Creates ParameterNode with extracted data, name, trainable=True
 
         If trainable=False:
             - If data is already a Node, returns it (with warning if name provided)
-            - Otherwise creates new Node with data, name 
+            - Otherwise creates new Node with data, name
     """
     assert type(description) is str or description is None
 
@@ -456,6 +456,10 @@ class AbstractNode(Generic[T]):
                 setattr(result, k, [])
             elif k == "_feedback":
                 setattr(result, k, defaultdict(list))
+            elif k == "_name":
+                name, counter = v.split(":")
+                new_name = v.replace(':', '') + '_copy:0'  # this allows to keep track with the original name
+                setattr(result, k, new_name)
             else:
                 setattr(result, k, copy.deepcopy(v, memo))
         GRAPH.register(result)
@@ -791,7 +795,7 @@ class Node(AbstractNode[T]):
         trainable: bool = False,
         description: str = None,
         info: Union[None, Dict] = None,
-    ) -> None:    
+    ) -> None:
 
         if description == "" or description is None:
             description = f"[{type(self).__name__}]"
@@ -828,13 +832,13 @@ class Node(AbstractNode[T]):
 
     @property
     def description(self):
-        """A textual description of the node."""        
+        """A textual description of the node."""
         # return self._description
         # remove the operator type from the description
         description = re.sub(r"^\[([^\[\]]+)\]", "", self._description).strip()
         # return None if empty
         return description if description else None
-    
+
     @property
     def op_name(self):
         """The operator type of the node, extracted from the description."""
@@ -2012,7 +2016,7 @@ class ParameterNode(Node[T]):
             info=info,
         )
         self._dependencies["parameter"].add(self)
-        
+
         if projections is not None:
             assert isinstance(
                 projections, list
@@ -2020,7 +2024,7 @@ class ParameterNode(Node[T]):
             from opto.trace.projections import Projection
             assert all(
                 isinstance(p, Projection) for p in projections
-            ), "All projections must be instances of Projection."            
+            ), "All projections must be instances of Projection."
             self.projections = projections
         else:
             self.projections = []

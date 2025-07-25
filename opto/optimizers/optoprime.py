@@ -258,7 +258,7 @@ class OptoPrime(Optimizer):
     final_prompt_with_variables = dedent(
         """
         What are your suggestions on variables {names}?
-        
+
         Your response:
         """
     )
@@ -333,13 +333,14 @@ class OptoPrime(Optimizer):
         if prompt_symbols is not None:
             self.prompt_symbols.update(prompt_symbols)
         if json_keys is not None:
-            self.default_json_keys.update(json_keys)        
-        if self.default_json_keys['answer'] is None:  # answer field is not needed 
-            del self.default_json_keys['answer']
-        if 'answer' not in self.default_json_keys:
+            self.default_json_keys.update(json_keys)
+        # if self.default_json_keys['answer'] is None:
+        #     del self.default_json_keys['answer']
+        # NOTE del cause KeyError if the key is not in the dict due to changing class attribute
+        if 'answer' not in self.default_json_keys or self.default_json_keys['answer'] is None:  # answer field is not needed
             # If 'answer' is not in the json keys, we use the no-answer format
             self.output_format_prompt = self.output_format_prompt_no_answer.format(**self.default_json_keys)
-        else:  # If 'answer' is in the json keys, we use the original format of OptoPrime        
+        else:  # If 'answer' is in the json keys, we use the original format of OptoPrime
             self.output_format_prompt = self.output_format_prompt_original.format(**self.default_json_keys)
         self.use_json_object_format = use_json_object_format
         self.highlight_variables = highlight_variables
@@ -450,8 +451,8 @@ class OptoPrime(Optimizer):
                 )
                 + user_prompt
             )
-        
-        
+
+
         if self.highlight_variables:
             var_names = []
             for k, v in summary.variables.items():
@@ -618,13 +619,13 @@ class OptoPrime(Optimizer):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-    
+
         response_format =  {"type": "json_object"} if self.use_json_object_format else None
         try:  # Try tp force it to be a json object
             response = self.llm(messages=messages, max_tokens=max_tokens, response_format=response_format)
         except Exception:
             response = self.llm(messages=messages, max_tokens=max_tokens)
-        
+
         response = response.choices[0].message.content
 
         if verbose:
