@@ -44,7 +44,7 @@ class SuggestionNormalizationProjection(Projection):
 
     def project(self, suggestion: dict) -> dict:
         from black import format_str, FileMode
-        def _find_key(node_name: str) -> str | None:
+        def _find_key(node_name: str):
             # exact match
             if node_name in suggestion:
                 return node_name
@@ -65,7 +65,8 @@ class SuggestionNormalizationProjection(Projection):
 
             raw_val = suggestion[key]
             # re-format any Python defs
-            if isinstance(raw_val, str) and "def" in raw_val:
+            # check that key start with "__code" and contains "def"
+            if isinstance(raw_val, str) and key.startswith("__code"):
                 raw_val = format_str(raw_val, mode=FileMode())
 
             # convert "123" → 123, "[1,2]" → [1,2], etc.
