@@ -523,3 +523,40 @@ def test_copy_function_with_nested_modules():
     # Test that the copy can still function
     result = copied.forward(3)
     assert result._data == 34  # (3 * 8) + 10
+
+def test_save_agent_xuanfei_case():
+
+    from typing import List, Dict, Any
+    from opto import trace
+    @trace.model
+    class SimpleAgent():
+        """A simple test agent"""
+
+        def __init__(self, tools_info: List[Dict[str, Any]]):
+            self.tools_info = trace.node(tools_info, trainable=True)
+            self.instructions = trace.node("Default instructions", trainable=True)
+
+        @trace.bundle()
+        def solve(self, tools_info, instructions, task):
+            return f"Solved: {task} with {len(tools_info)} tools and instructions: {instructions}"
+
+        def forward(self, task):
+            return self.solve(self.tools_info, self.instructions, task)
+
+    def main():
+        # Create agent
+        tools = [{"name": "test_tool", "description": "A test tool"}]
+        agent = SimpleAgent(tools)
+
+        # Try to save agent using trace repo's built-in save method
+        print("\n--- Attempting to save agent ---")
+        agent.save("agent.pkl")
+        print("✅ Agent saved successfully using agent.save()")
+
+    main()
+    import os
+    if os.path.exists("agent.pkl"):
+        os.remove("agent.pkl")
+        print("Temporary file 'agent.pkl' deleted.")
+    else:
+        print("File 'agent.pkl' does not exist.")
