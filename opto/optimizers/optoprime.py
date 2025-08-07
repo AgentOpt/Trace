@@ -5,6 +5,7 @@ import warnings
 import json
 import re
 import copy
+import pickle
 from opto.trace.nodes import ParameterNode, Node, MessageNode
 from opto.trace.propagators import TraceGraph, GraphPropagator
 from opto.trace.propagators.propagators import Propagator
@@ -258,7 +259,7 @@ class OptoPrime(Optimizer):
     final_prompt_with_variables = dedent(
         """
         What are your suggestions on variables {names}?
-        
+
         Your response:
         """
     )
@@ -333,13 +334,14 @@ class OptoPrime(Optimizer):
         if prompt_symbols is not None:
             self.prompt_symbols.update(prompt_symbols)
         if json_keys is not None:
-            self.default_json_keys.update(json_keys)        
-        if self.default_json_keys['answer'] is None:  # answer field is not needed 
-            del self.default_json_keys['answer']
-        if 'answer' not in self.default_json_keys:
+            self.default_json_keys.update(json_keys)
+        # if self.default_json_keys['answer'] is None:
+        #     del self.default_json_keys['answer']
+        # NOTE del cause KeyError if the key is not in the dict due to changing class attribute
+        if 'answer' not in self.default_json_keys or self.default_json_keys['answer'] is None:  # answer field is not needed
             # If 'answer' is not in the json keys, we use the no-answer format
             self.output_format_prompt = self.output_format_prompt_no_answer.format(**self.default_json_keys)
-        else:  # If 'answer' is in the json keys, we use the original format of OptoPrime        
+        else:  # If 'answer' is in the json keys, we use the original format of OptoPrime
             self.output_format_prompt = self.output_format_prompt_original.format(**self.default_json_keys)
         self.use_json_object_format = use_json_object_format
         self.highlight_variables = highlight_variables
@@ -450,8 +452,8 @@ class OptoPrime(Optimizer):
                 )
                 + user_prompt
             )
-        
-        
+
+
         if self.highlight_variables:
             var_names = []
             for k, v in summary.variables.items():
@@ -618,15 +620,51 @@ class OptoPrime(Optimizer):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-    
+
         response_format =  {"type": "json_object"} if self.use_json_object_format else None
         try:  # Try tp force it to be a json object
             response = self.llm(messages=messages, max_tokens=max_tokens, response_format=response_format)
         except Exception:
             response = self.llm(messages=messages, max_tokens=max_tokens)
-        
+
         response = response.choices[0].message.content
 
         if verbose:
             print("LLM response:\n", response)
         return response
+
+
+    def save(self, path: str):
+        """Save the optimizer state to a file."""
+        # save the above using pickle isntead
+        with open(path, "wb") as f:
+            pickle.dump(
+                {
+                    "ignore_extraction_error": self.ignore_extraction_error,
+                    "objective": self.objective,
+                    "include_example": self.include_example,
+                    "max_tokens": self.max_tokens,
+                    "memory": self.memory,
+                    "prompt_symbols": self.prompt_symbols,
+                    "json_keys": self.default_json_keys,
+                    'output_format_prompt': self.output_format_prompt,
+                    "use_json_object_format": self.use_json_object_format,
+                    "highlight_variables": self.highlight_variables,
+                },
+                f,
+            )
+
+    def load(self, path: str):
+        """Load the optimizer state from a file."""
+        with open(path, "rb") as f:
+            state = pickle.load(f)
+            self.ignore_extraction_error = state["ignore_extraction_error"]
+            self.objective = state["objective"]
+            self.include_example = state["include_example"]
+            self.max_tokens = state["max_tokens"]
+            self.memory = state["memory"]
+            self.prompt_symbols = state["prompt_symbols"]
+            self.default_json_keys = state["json_keys"]
+            self.output_format_prompt = state['output_format_prompt']
+            self.use_json_object_format = state["use_json_object_format"]
+            self.highlight_variables = state["highlight_variables"]

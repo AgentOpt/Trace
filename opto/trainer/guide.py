@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Union, Tuple, Optional, Callable
 import json
+import pickle
 import re
 import copy
 from opto.utils.llm import LLM, AbstractModel
@@ -37,15 +38,15 @@ class AutoGuide:
 
     def forward(self, task: str, response: str, info: Any, **kwargs) -> Tuple[float, str]:
         return self.get_feedback(task, response, info, **kwargs)
-    
+
     def get_feedback(self, query: str, response: str, reference: Optional[str] = None, **kwargs) -> Tuple[float, str]:
         raise NotImplementedError
 
     def metric(self, query: str, response: str, reference: Optional[str] = None, **kwargs) -> float:
         """ Exact match metric """
         return self.get_feedback(query, response, reference)[0]
-    
-    def copy(self): 
+
+    def copy(self):
         """ Create a copy of the guide instance.
 
         Returns:
@@ -54,6 +55,18 @@ class AutoGuide:
         # This is used in batch_run to create a new instance of the guide.
         # This can be overridden by subclasses to provide a more specific copy behavior.
         return copy.deepcopy(self)
+
+    def save(self, path: str):
+        """ Save the guide to a file. """
+        with open(path, 'wb') as f:
+            pickle.dump(self.__dict__, f)
+
+    def load(self, path: str):
+        """ Load the guide from a file. """
+        with open(path, 'rb') as f:
+            data = pickle.load(f)
+            for key, value in data.items():
+                setattr(self, key, value)
 
 
 class VerbalJudgeGuide(AutoGuide):
@@ -121,10 +134,10 @@ class VerbalJudgeGuide(AutoGuide):
 
         # Check if metric function indicates perfect match
         user_prompt = self.prompt_template.format(
-                query=query, 
-                response=response, 
-                reference=reference, 
-                correctness_template=self.DEFAULT_CORRECTNESS_TEMPLATE, 
+                query=query,
+                response=response,
+                reference=reference,
+                correctness_template=self.DEFAULT_CORRECTNESS_TEMPLATE,
                 incorrectness_template=self.DEFAULT_INCORRECTNESS_TEMPLATE)
 
         messages = [

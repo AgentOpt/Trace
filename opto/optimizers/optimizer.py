@@ -54,7 +54,7 @@ class Optimizer(AbstractOptimizer):
 
     def step(self, bypassing=False, *args, **kwargs):
         update_dict = self.propose(*args, **kwargs)
-        self.project(update_dict)   
+        self.project(update_dict)
         if not bypassing:
             self.update(update_dict)
         return update_dict  # TODO add reasoning
@@ -63,7 +63,7 @@ class Optimizer(AbstractOptimizer):
         """Project the update dictionary onto the feasible set."""
         for p, d in update_dict.items():
             if p.trainable:
-                for projection in p.projections:                                        
+                for projection in p.projections:
                     d = projection.project(d)
             update_dict[p] = d
 
@@ -93,3 +93,11 @@ class Optimizer(AbstractOptimizer):
     def backward(self, node: Node, *args, **kwargs):
         """Propagate the feedback backward."""
         return node.backward(*args, propagator=self.propagator, **kwargs)
+
+    def save(self, path: str):
+        """Save the optimizer state to a file."""
+        pass
+
+    def load(self, path: str):
+        """Load the optimizer state from a file."""
+        pass
