@@ -12,7 +12,7 @@ from opto.trace.propagators.propagators import Propagator
 from opto.utils.llm import AbstractModel, LLM
 from opto.optimizers.buffers import FIFOBuffer
 import copy
-
+import pickle
 import re
 from typing import Dict, Any
 
@@ -343,7 +343,7 @@ class OptoPrimeV2(OptoPrime):
 
         For variables we express as this:
         {variable_expression_format}
-        
+
         If `data_type` is `code`, it means `{value_tag}` is the source code of a python code, which may include docstring and definitions.
         """
     )
@@ -354,7 +354,7 @@ class OptoPrimeV2(OptoPrime):
     output_format_prompt_template = dedent(
         """
         Output_format: Your output should be in the following XML/HTML format:
-        
+
         ```
         {output_format}
         ```
@@ -407,7 +407,7 @@ class OptoPrimeV2(OptoPrime):
     final_prompt = dedent(
         """
         What are your suggestions on variables {names}?
-        
+
         Your response:
         """
     )
@@ -710,3 +710,41 @@ class OptoPrimeV2(OptoPrime):
         if verbose:
             print("LLM response:\n", response)
         return response
+
+
+    def save(self, path: str):
+        """Save the optimizer state to a file."""
+        with open(path, 'wb') as f:
+            pickle.dump({
+                "truncate_expression": self.truncate_expression,
+                "use_json_object_format": self.use_json_object_format,
+                "ignore_extraction_error": self.ignore_extraction_error,
+                "objective": self.objective,
+                "initial_var_char_limit": self.initial_var_char_limit,
+                "optimizer_prompt_symbol_set": self.optimizer_prompt_symbol_set,
+                "include_example": self.include_example,
+                "max_tokens": self.max_tokens,
+                "memory": self.memory,
+                "default_prompt_symbols": self.default_prompt_symbols,
+                "prompt_symbols": self.prompt_symbols,
+                "representation_prompt": self.representation_prompt,
+                "output_format_prompt": self.output_format_prompt,
+            }, f)
+
+    def load(self, path: str):
+        """Load the optimizer state from a file."""
+        with open(path, 'rb') as f:
+            state = pickle.load(f)
+            self.truncate_expression = state["truncate_expression"]
+            self.use_json_object_format = state["use_json_object_format"]
+            self.ignore_extraction_error = state["ignore_extraction_error"]
+            self.objective = state["objective"]
+            self.initial_var_char_limit = state["initial_var_char_limit"]
+            self.optimizer_prompt_symbol_set = state["optimizer_prompt_symbol_set"]
+            self.include_example = state["include_example"]
+            self.max_tokens = state["max_tokens"]
+            self.memory = state["memory"]
+            self.default_prompt_symbols = state["default_prompt_symbols"]
+            self.prompt_symbols = state["prompt_symbols"]
+            self.representation_prompt = state["representation_prompt"]
+            self.output_format_prompt = state["output_format_prompt"]
