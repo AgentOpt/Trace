@@ -1,5 +1,26 @@
 from typing import Dict, Any
 
+
+def is_bedrock_model(model_name: str) -> bool:
+    """Check whether a model name refers to an AWS Bedrock model.
+
+    Bedrock models in LiteLLM look like ``bedrock/us.anthropic.claude-...`` or
+    carry a region prefix such as ``us.``/``eu.``/``ap.``.
+
+    Args:
+        model_name: The model name string to check (may be None).
+
+    Returns:
+        True if the model is a Bedrock model, False otherwise.
+    """
+    if model_name is None:
+        return False
+    if model_name.startswith('bedrock/'):
+        return True
+    # AWS region prefixes (us-east-1, eu-west-1, ap-northeast-1, ...)
+    return any(model_name.startswith(f'{region}.') for region in ('us', 'eu', 'ap'))
+
+
 def print_color(message, color=None, logger=None):
     colors = {
         "red": "\033[91m",

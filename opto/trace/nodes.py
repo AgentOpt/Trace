@@ -285,6 +285,102 @@ USED_NODES = contextvars.ContextVar('USED_NODES', default=list())
 T = TypeVar("T")
 
 
+def verify_data_is_image_url(url: str, timeout: float = 1.0) -> bool:
+    """Verify that a URL points to an image via a HEAD request (Content-Type).
+
+    Use this when you need definitive verification beyond the pattern-based
+    :func:`is_image` check (e.g. right before converting an image to base64).
+
+    Args:
+        url: The URL to check.
+        timeout: Maximum time in seconds to wait for the request. Default 1.0.
+
+    Returns:
+        bool: True if the URL returns an ``image/*`` Content-Type, else False.
+        Returns False for non-URL data or if the request/library is unavailable.
+    """
+    if not isinstance(url, str):
+        return False
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https'):
+            return False
+        try:
+            import requests
+            response = requests.head(url, timeout=timeout, allow_redirects=True)
+            content_type = response.headers.get('content-type', '').lower()
+            return content_type.startswith('image/')
+        except ImportError:
+            warnings.warn(
+                "requests library not available. Install with: pip install requests",
+                ImportWarning,
+            )
+            return False
+        except Exception:
+            # Network errors, timeouts, invalid URLs, etc.
+            return False
+    except (ValueError, AttributeError):
+        return False
+
+
+def is_image(data) -> bool:
+    """Pattern-based check for whether ``data`` represents an image.
+
+    Supports: base64 data-URL strings (``data:image/...``), PIL Image objects,
+    raw image bytes, image URLs (by extension; no network request), and
+    ``ImageContent`` containers (checked by class name to avoid an import cycle).
+
+    For network verification of URLs, use :func:`verify_data_is_image_url`.
+    Convert numpy arrays to PIL Images first.
+    """
+    # Base64 data URL string
+    if isinstance(data, str) and data.startswith('data:image/'):
+        return True
+
+    # PIL Image object
+    try:
+        from PIL import Image
+        if isinstance(data, Image.Image):
+            return True
+    except ImportError:
+        pass
+
+    # Raw image bytes
+    if isinstance(data, bytes):
+        try:
+            from PIL import Image
+            from io import BytesIO
+            Image.open(BytesIO(data))
+            return True
+        except Exception:
+            pass
+
+    # Image URL (pattern-based, no network request)
+    if isinstance(data, str):
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(data)
+            if parsed.scheme in ('http', 'https'):
+                path = parsed.path.lower()
+                image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
+                                    '.svg', '.ico', '.tiff', '.tif', '.heic', '.heif')
+                if any(path.endswith(ext) for ext in image_extensions):
+                    return True
+        except (ValueError, AttributeError):
+            pass
+
+    # Specialized container class (e.g. ImageContent) checked by name to keep
+    # nodes.py free of external (opto.utils) dependencies.
+    try:
+        if 'ImageContent' in data.__class__.__name__:
+            return True
+    except AttributeError:
+        pass
+
+    return False
+
+
 class AbstractNode(Generic[T]):
     """AbstractNode represents an abstract data node in a directed graph.
 
@@ -361,6 +457,11 @@ class AbstractNode(Generic[T]):
         if len(current_used_nodes) > 0 and GRAPH.TRACE:  # We're within trace_nodes context.
             current_used_nodes[-1].add(self)
         return self.__getattribute__("_data")
+
+    @property
+    def is_image(self) -> bool:
+        """Whether this node's data represents an image (see :func:`is_image`)."""
+        return is_image(self._data)
 
     @property
     def parents(self):
