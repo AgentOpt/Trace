@@ -18,9 +18,9 @@ from opto.trace.propagators.propagators import Propagator
 from opto.utils.llm import AbstractModel, LLM
 from opto.optimizers.buffers import FIFOBuffer
 from opto.utils.backbone import (
-    Chat, UserTurn, AssistantTurn, PromptTemplate,
+    UserTurn, AssistantTurn, PromptTemplate,
     TextContent, ImageContent, ContentBlockList,
-    DEFAULT_IMAGE_PLACEHOLDER, Content
+    DEFAULT_IMAGE_PLACEHOLDER, Content, to_messages
 )
 import copy
 import pickle
@@ -643,8 +643,10 @@ class OptoPrimeV3(OptoPrime):
         self.log = [] if log else None
         self.summary_log = [] if log else None
         self.memory = FIFOBuffer(memory_size)
-        self.conversation_history = Chat()
-        self.conversation_length = memory_size  # Number of conversation turns to keep
+        # Plain list of LiteLLM-format message dicts (no Chat manager). The
+        # system prompt is rebuilt per step; this holds prior user/assistant rounds.
+        self.message_history: List[Dict[str, Any]] = []
+        self.conversation_length = memory_size  # Number of conversation rounds to keep
 
         self.default_prompt_symbols = self.optimizer_prompt_symbol_set.default_prompt_symbols
 
@@ -1055,9 +1057,9 @@ class OptoPrimeV3(OptoPrime):
         )
 
         # we add a temporary check here to ensure no more than 1 parameter is an image
-        variable_stats = variables_content.count_blocks()
-        if 'ImageContent' in variable_stats:
-            assert variable_stats['ImageContent'] <= 1, "Currently we do not support generating multiple images (more than 1 parameter is an image)"
+        num_images = sum(1 for block in variables_content if isinstance(block, ImageContent))
+        if num_images > 0:
+            assert num_images <= 1, "Currently we do not support generating multiple images (more than 1 parameter is an image)"
             self.output_contains_image = True
 
         inputs_content = (
@@ -1204,21 +1206,18 @@ class OptoPrimeV3(OptoPrime):
             suffix = f" [+ {DEFAULT_IMAGE_PLACEHOLDER}]" if has_images else ""
             print("Prompt\n", system_prompt + "".join(text_parts) + suffix)
 
-        # Update system prompt in conversation history
-        self.conversation_history.system_prompt = system_prompt
+        # Build the user message from the content blocks.
+        user_message = UserTurn(user_prompt).to_litellm_format()
 
-        # Create user turn with content
-        user_turn = UserTurn(user_prompt)
-        self.conversation_history.add_user_turn(user_turn)
+        # Keep the last `conversation_length` rounds (each round = user+assistant).
+        if self.conversation_length > 0:
+            history = self.message_history[-2 * self.conversation_length:]
+        else:
+            history = []
 
-        # Get messages with conversation length control (truncate from start)
-        # conversation_length = n historical rounds (user+assistant pairs) to keep
-        # The current user turn is automatically included by to_messages()
-        messages = self.conversation_history.to_messages(
-            n=self.conversation_length if self.conversation_length > 0 else -1,
-            truncate_strategy="from_start",
-            model_name=self.llm.model_name
-        )
+        # Assemble the stateless request: system + history + current user turn.
+        messages = to_messages(system_prompt, history=history)
+        messages.append(user_message)
 
         # Bedrock doesn't support response_format natively - LiteLLM adds tools which breaks the response
         _is_bedrock = hasattr(self.llm, 'model_name') and is_bedrock_model(self.llm.model_name)
@@ -1236,7 +1235,9 @@ class OptoPrimeV3(OptoPrime):
         if verbose:
             print("LLM response:\n", assistant_turn)
 
-        self.conversation_history.add_assistant_turn(assistant_turn)
+        # Append this round to the history we manage ourselves.
+        self.message_history.append(user_message)
+        self.message_history.append(assistant_turn.to_litellm_format())
 
         return assistant_turn
 
@@ -1253,7 +1254,7 @@ class OptoPrimeV3(OptoPrime):
                 "include_example": self.include_example,
                 "max_tokens": self.max_tokens,
                 "memory": self.memory,
-                "conversation_history": self.conversation_history,
+                "message_history": self.message_history,
                 "conversation_length": self.conversation_length,
                 "default_prompt_symbols": self.default_prompt_symbols,
                 "prompt_symbols": self.prompt_symbols,
@@ -1274,7 +1275,7 @@ class OptoPrimeV3(OptoPrime):
             self.include_example = state["include_example"]
             self.max_tokens = state["max_tokens"]
             self.memory = state["memory"]
-            self.conversation_history = state.get("conversation_history", Chat())
+            self.message_history = state.get("message_history", [])
             self.conversation_length = state.get("conversation_length", 0)
             self.default_prompt_symbols = state["default_prompt_symbols"]
             self.prompt_symbols = state["prompt_symbols"]
