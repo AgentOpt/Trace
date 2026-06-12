@@ -1,8 +1,9 @@
-"""Multimodal conversation primitives for Trace optimizers.
+"""Minimal multimodal conversation primitives for Trace optimizers.
 
-This package replaces the former single-file ``backbone.py``. The public API is
-re-exported here so existing imports (``from opto.utils.backbone import X``)
-keep working.
+Provides text/image content blocks, lightweight user/assistant turns, a prompt
+template, and a stateless :func:`to_messages` helper for building provider-ready
+messages lists. There is no conversation manager: optimizers own their own
+message history as a plain list of dicts.
 """
 from .content import (
     DEFAULT_IMAGE_PLACEHOLDER,
@@ -14,8 +15,7 @@ from .content import (
     ContentBlock,
 )
 from .template import PromptTemplate
-from .turns import Turn, UserTurn, AssistantTurn
-from .chat import Chat
+from .turns import Turn, UserTurn, AssistantTurn, to_messages
 
 __all__ = [
     "DEFAULT_IMAGE_PLACEHOLDER",
@@ -29,5 +29,5 @@ __all__ = [
     "Turn",
     "UserTurn",
     "AssistantTurn",
-    "Chat",
+    "to_messages",
 ]

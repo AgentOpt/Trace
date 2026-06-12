@@ -14,10 +14,10 @@ import os
 import warnings
 from .auto_retry import retry_with_exponential_backoff
 
-# Import content/turn types for mm_beta mode.
+# Import the assistant-turn parser for mm_beta mode.
 # Heavy/optional SDKs (openai, google-genai) are imported lazily inside the
 # backends that need them, so importing this module never requires them.
-from .backbone import AssistantTurn, TextContent, ImageContent
+from .backbone import AssistantTurn
 
 try:
     import autogen  # We import autogen here to avoid the need of installing autogen
@@ -93,7 +93,7 @@ class AbstractModel:
     2. **Serialization**: Supports pickling by recreating the model on load.
     3. **Response Formats**: 
        - Legacy (mm_beta=False): `response['choices'][0]['message']['content']`
-       - Multimodal (mm_beta=True): AssistantTurn object with .content, .tool_calls, etc.
+       - Multimodal (mm_beta=True): AssistantTurn object with .content, .reasoning, etc.
 
     Subclasses should override the `model` property to customize behavior.
 
@@ -624,28 +624,17 @@ class GoogleGenAILLM(AbstractModel):
     max_output_tokens, etc.) that will be used for all calls unless overridden.
     
     Text Generation:
-        Use ConversationHistory.to_gemini_format() to convert conversation history
-        to the format expected by Google GenAI.
-        
+        Pass standard OpenAI-style messages; the backend converts them to the
+        format expected by Google GenAI (and extracts the system instruction).
+
         Example:
             from opto.utils.llm import LLM
-            from opto.utils.backbone import ConversationHistory, UserTurn, AssistantTurn
-            
-            # Initialize LLM
-            llm = LLM(model="gemini-2.5-flash")
-            
-            # Create conversation history
-            history = ConversationHistory()
-            history.system_prompt = "You are a helpful assistant."
-            history.add_user_turn(UserTurn().add_text("What is AI?"))
-            
-            # Convert to Gemini format and call LLM
-            messages = history.to_gemini_format()
+            from opto.utils.backbone import to_messages
+
+            llm = LLM(model="gemini-2.5-flash", mm_beta=True)
+            messages = to_messages("You are a helpful assistant.", "What is AI?")
             response = llm(messages=messages, max_tokens=100)
-            
-            # Parse response
-            at = AssistantTurn(response)
-            print(at.get_text())
+            print(response.get_text())
     
     Image Generation:
         Automatically detects image generation models (containing 'image' in name).
@@ -732,7 +721,7 @@ class GoogleGenAILLM(AbstractModel):
             # Extract system_instruction if present (needs to be at config level, not in kwargs)
             system_instruction = kwargs.pop('system_instruction', None)
             
-            # Handle messages parameter (from history.to_gemini_format())
+            # Handle messages parameter (OpenAI-style or Gemini-native dicts)
             messages = kwargs.pop('messages', None)
             contents = kwargs.pop('contents', None)
             
@@ -753,7 +742,7 @@ class GoogleGenAILLM(AbstractModel):
                         system_instruction = extracted_sys
                     contents = converted
                 else:
-                    # Already in Gemini native format (from history.to_gemini_format())
+                    # Already in Gemini native format ('parts' keys)
                     if messages[0].get('role') == 'system':
                         if system_instruction is None:
                             system_instruction = messages[0].get('content')
@@ -880,87 +869,17 @@ _LLM_REGISTRY = {
 class LLMFactory:
     """Factory for creating LLM instances with named profiles.
 
-    Profiles allow you to save and reuse LLM configurations with specific settings.
-    Each profile can include any LiteLLM-supported parameters like model, temperature,
-    top_p, max_tokens, etc.
+    Profiles store reusable backend configurations (model + any
+    LiteLLM-supported params like temperature, top_p, max_tokens, ...). The
+    default profile uses 'gpt-4o' via LiteLLM.
 
-    The default profile uses 'gpt-4o-mini' with standard settings.
+    Example:
+        LLMFactory.create_profile("creative", model="gpt-4o", temperature=0.9)
+        llm = LLM(profile="creative")
+        LLMFactory.list_profiles()
+        LLMFactory.get_profile_info("creative")
 
-    Basic Usage:
-        # Use default model (gpt-4o-mini)
-        llm = LLM()
-        
-        # Specify a model directly
-        llm = LLM(model="gpt-4o")
-        
-        # Use a named profile
-        llm = LLM(profile="my_profile")
-
-    Creating Custom Profiles:
-        # Register a profile with full LiteLLM configuration
-        LLMFactory.create_profile(
-            "creative_writer",
-            backend="LiteLLM",
-            model="gpt-4o",
-            temperature=0.9,
-            top_p=0.95,
-            max_tokens=2000,
-            presence_penalty=0.6
-        )
-        
-        # Register a reasoning profile
-        LLMFactory.create_profile(
-            "deep_thinker",
-            backend="LiteLLM",
-            model="o1-preview",
-            max_completion_tokens=8000
-        )
-        
-        # Register a profile with specific formatting
-        LLMFactory.create_profile(
-            "json_responder",
-            backend="LiteLLM",
-            model="gpt-4o-mini",
-            temperature=0.3,
-            response_format={"type": "json_object"}
-        )
-
-    Using Profiles:
-        # Use your custom profile
-        llm = LLM(profile="creative_writer")
-        
-        # In optimizers
-        optimizer = OptoPrime(parameters, llm=LLM(profile="deep_thinker"))
-
-    Profile Management:
-        # List all available profiles
-        profiles = LLMFactory.list_profiles()
-        
-        # Get profile configuration
-        config = LLMFactory.get_profile_info("creative_writer")
-        
-        # Override existing profile
-        LLMFactory.create_profile("default", "LiteLLM", model="gpt-4o", temperature=0.5)
-
-    Supported LiteLLM Parameters:
-        See https://docs.litellm.ai/docs/completion/input for full list:
-        - model: Model name (required)
-        - temperature: Sampling temperature (0-2)
-        - top_p: Nucleus sampling parameter
-        - max_tokens: Maximum tokens to generate
-        - max_completion_tokens: Upper bound for completion tokens
-        - presence_penalty: Penalize new tokens based on presence
-        - frequency_penalty: Penalize new tokens based on frequency
-        - stop: Stop sequences (string or list)
-        - stream: Enable streaming responses
-        - response_format: Output format specification
-        - seed: Deterministic sampling seed
-        - tools: Function calling tools
-        - tool_choice: Control function calling behavior
-        - logprobs: Return log probabilities
-        - top_logprobs: Number of most likely tokens to return
-        - n: Number of completions to generate
-        - and many more...
+    See https://docs.litellm.ai/docs/completion/input for the full parameter list.
     """
 
     # Default profile - just gpt-4o-mini with no opinionated settings
@@ -1129,189 +1048,40 @@ class DummyLLM(AbstractModel):
         return lambda *args, **kwargs:  Response(self.callable(*args, **kwargs))
 
 class LLM:
-    """
-    A unified entry point for all supported LLM backends.
+    """Unified entry point for all supported LLM backends.
 
-    The LLM class provides a simple interface for creating language model instances.
-    By default, it uses gpt-4o through LiteLLM unless TRACE_LITELLM_MODEL is set.
+    Defaults to gpt-4o via LiteLLM unless ``TRACE_LITELLM_MODEL`` is set. Pass
+    ``mm_beta=True`` to receive parsed :class:`AssistantTurn` responses (with
+    ``.get_text()`` / ``.get_images()``); otherwise the raw API response is
+    returned.
 
-    Basic Usage:
-        # Use default model (gpt-4o, unless TRACE_LITELLM_MODEL is set)
-        llm = LLM()
-        
-        # Specify a model directly (highest priority)
-        llm = LLM(model="gpt-4o")
+    Common usage:
+        llm = LLM()                                  # default model
+        llm = LLM(model="gpt-4o", temperature=0.7)   # explicit model + params
         llm = LLM(model="claude-3-5-sonnet-latest")
-        llm = LLM(model="o1-preview")
-        
-        # Use Azure OpenAI via environment variable
-        os.environ["TRACE_LITELLM_MODEL"] = "azure/o4-mini"
-        llm = LLM()  # Automatically uses Azure with proper auth
-        
-        # Add LiteLLM parameters
-        llm = LLM(model="gpt-4o", temperature=0.7, max_tokens=2000)
-        llm = LLM(model="gpt-4o-mini", temperature=0.3, top_p=0.9)
-    
-    Image Generation:
-        # OpenAI image models (auto-detected by 'image' or 'dall-e' in name)
-        img_llm = LLM(model="gpt-image-1.5")
-        print(img_llm.is_image_model)  # True
-        result = img_llm(prompt="A serene mountain landscape at sunset")
-        
-        # With additional parameters
-        img_llm = LLM(model="gpt-image-1", size="1024x1024", quality="hd")
-        result = img_llm(prompt="A futuristic cityscape")
-        
-        # DALL-E models
-        dalle = LLM(model="dall-e-3")
-        result = dalle(prompt="A cat astronaut in space", size="1024x1792")
-        
-        # Gemini image models
-        gemini_img = LLM(model="gemini-2.5-flash-image")
-        result = gemini_img(prompt="Abstract art", number_of_images=2)
-        
-        # Check if model generates images
-        if llm.is_image_model:
-            result = llm(prompt="Your prompt here")
-        else:
-            result = llm(messages=[{"role": "user", "content": "Your message"}])
+        llm = LLM(model="gemini-2.5-flash", mm_beta=True)
+        llm = LLM(profile="creative")                # named profile
+        llm = LLM(backend="AutoGen", config_list=cfg)
 
-    Using Multimodal Beta Mode:
-        # Enable mm_beta for rich AssistantTurn responses
-        llm = LLM(model="gpt-4o", mm_beta=True)
-        response = llm(messages=[{"role": "user", "content": "Hello"}])
-        # response is now an AssistantTurn object with .content, .tool_calls, etc.
-        
-        # Legacy mode (default, mm_beta=False)
-        llm = LLM(model="gpt-4o")
-        response = llm(messages=[{"role": "user", "content": "Hello"}])
-        # response is raw API response: response.choices[0].message.content
+    Image generation (models with 'image'/'dall-e' in the name) take a single
+    prompt string:
+        img = LLM(model="gpt-image-1.5")
+        result = img(prompt="A serene mountain landscape")
 
-    Using System Messages:
-        
-        # LiteLLM (OpenAI, Anthropic, etc.) - Use messages array with role="system"
-        llm = LLM(model="gpt-4o-mini", mm_beta=True)
-        response = llm(messages=[
-            {"role": "system", "content": "You are a helpful math tutor."},
-            {"role": "user", "content": "What is 2+2?"}
-        ])
-        print(response.get_text())  # AssistantTurn object
-        
-        # LiteLLM Legacy mode (mm_beta=False)
-        llm = LLM(model="gpt-4o-mini")
-        response = llm(messages=[
-            {"role": "system", "content": "You are a pirate assistant."},
-            {"role": "user", "content": "Hello!"}
-        ])
-        print(response.choices[0].message.content)  # Raw API response
-        
-        # Google Gemini - Use system_instruction parameter (not in messages array)
-        llm = LLM(backend="GoogleGenAI", model="gemini-2.5-flash-image", mm_beta=True)
-        response = llm(
-            "Hello there",
-            system_instruction="You are a helpful assistant."
-        )
-        print(response.get_text())  # AssistantTurn object
-        
-        # Gemini with messages format (system_instruction separate from messages)
-        llm = LLM(backend="GoogleGenAI", model="gemini-2.5-flash-image", mm_beta=True)
-        response = llm(
-            messages=[
-                {"role": "user", "content": "What is your purpose?"}
-            ],
-            system_instruction="You are a creative writing instructor."
-        )
-        
-        # Our Gemini wrapper also automatically extracts system instruction from messages array if not passed explicitly
-        messages = [
-            {"role": "system", "content": "You are a Shakespearean poet."},
-            {"role": "user", "content": "Tell me about the sun."}
-        ]
-        response1 = llm(messages=messages)
-        messages.append({"role": "assistant", "content": response1.get_text()})
-        messages.append({"role": "user", "content": "And the moon?"})
-        response2 = llm(messages=messages)  # System message still applies
+    Model selection priority when ``model`` is not given:
+        1. explicit ``model=`` argument
+        2. ``TRACE_LITELLM_MODEL`` environment variable
+        3. named ``profile`` (default 'default')
+        4. backend-specific defaults
 
-    Using Named Profiles:
-        # Use a saved profile
-        llm = LLM(profile="my_custom_profile")
-        
-        # Create profiles with LLMFactory
-        LLMFactory.create_profile("creative", model="gpt-4o", temperature=0.9)
-        llm = LLM(profile="creative")
-
-    Using Different Backends:
-        # Explicitly specify backend (default: LiteLLM)
-        llm = LLM(backend="AutoGen", config_list=my_configs)
-        llm = LLM(backend="CustomLLM", model="llama-3.1-8b")
-        llm = LLM(backend="GoogleGenAI", model="gemini-2.5-flash-image")
-        
-        # Or set via environment variable
-        # export TRACE_DEFAULT_LLM_BACKEND=AutoGen
-        llm = LLM()
-
-    Model Selection Priority (when no model= argument is provided):
-        The LLM class follows this priority order for determining which model to use:
-        
-        1. Explicit model argument: LLM(model="gpt-4o")
-        2. TRACE_LITELLM_MODEL environment variable: 
-           # export TRACE_LITELLM_MODEL="azure/o4-mini"
-           llm = LLM()  # Uses azure/o4-mini
-        3. Named profile (default='default'): LLM(profile="my_profile")
-        4. Backend-specific defaults
-        
-        This means setting TRACE_LITELLM_MODEL will be honored even when using
-        default initialization, making it ideal for Azure and custom endpoints:
-        
-        # Azure OpenAI setup
-        os.environ["TRACE_LITELLM_MODEL"] = "azure/o4-mini"
-        os.environ["AZURE_API_KEY"] = "your-key"
-        os.environ["AZURE_API_BASE"] = "https://your-resource.openai.azure.com"
-        os.environ["AZURE_API_VERSION"] = "2024-08-01-preview"
-        
-        # Now LLM() automatically uses Azure
-        llm = LLM(mm_beta=True)  # Uses azure/o4-mini with proper Azure auth
-
-    Examples with LiteLLM Parameters:
-        # Structured output
-        llm = LLM(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
-            temperature=0.3
-        )
-        
-        # High creativity
-        llm = LLM(
-            model="gpt-4o",
-            temperature=0.9,
-            top_p=0.95,
-            presence_penalty=0.6
-        )
-        
-        # Deterministic responses
-        llm = LLM(
-            model="gpt-4o-mini",
-            temperature=0,
-            seed=42
-        )
-
-    Key Differences Between Backends:
-        LiteLLM (OpenAI, Anthropic, etc.):
-            - System message: Include in messages array with role="system"
-            - Format: messages=[{"role": "system", "content": "..."}]
-            - Works with: OpenAI, Anthropic, Cohere, etc.
-        
-        Google Gemini:
-            - System instruction: Pass as system_instruction parameter
-            - Format: system_instruction="You are a helpful assistant."
-            - Separate from messages array
-            - Works with: gemini-2.5-flash, gemini-2.5-pro, etc.
+    System messages: for LiteLLM backends include a ``role="system"`` message;
+    for GoogleGenAI pass ``system_instruction=`` (the backend also extracts a
+    leading system message automatically).
 
     See Also:
-        - LLMFactory: For managing named profiles
-        - AssistantTurn: Returned when mm_beta=True
-        - https://docs.litellm.ai/docs/completion/input: Full list of LiteLLM parameters
-        - https://ai.google.dev/gemini-api/docs/system-instructions: Gemini system instructions
+        - LLMFactory: managing named profiles
+        - AssistantTurn: returned when mm_beta=True
+        - https://docs.litellm.ai/docs/completion/input
     """
     def __new__(cls, model: str = None, profile: str = 'default', backend: str = None, 
                 mm_beta: bool = False, **kwargs):

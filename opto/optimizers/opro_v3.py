@@ -149,14 +149,12 @@ class ProblemInstance:
     @staticmethod
     def _content_to_text(content: Union[str, List[ContentBase]]) -> str:
         """Convert content (str or List[ContentBlock]) to text representation.
-        
-        Handles both string content and ContentBlockList/List[ContentBlock].
-        Uses ContentBlockList.blocks_to_text for list content.
+
+        Images are rendered as the default placeholder.
         """
         if isinstance(content, str):
             return content
-        # Use the shared utility from ContentBlockList
-        return ContentBlockList.blocks_to_text(content, DEFAULT_IMAGE_PLACEHOLDER)
+        return ContentBlockList.ensure(content).to_text(DEFAULT_IMAGE_PLACEHOLDER)
 
     def __repr__(self) -> str:
         """Return text-only representation for backward compatibility."""
