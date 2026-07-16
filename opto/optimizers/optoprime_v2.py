@@ -492,7 +492,7 @@ class OptoPrimeV2(OptoPrime):
                     temp_list.append(
                         f"<{node_tag} name=\"{k}\" type=\"{type(v[0]).__name__}\">\n<{value_tag}>\n{v[0]}\n</{value_tag}>\n</{node_tag}>\n")
             else:
-                constraint_expr = f"<constraint>\n{v[1]}\n</constraint>"
+                constraint_expr = f"<{constraint_tag}>\n{v[1]}\n</{constraint_tag}>"  # Respect custom constraint tags for code variables.
                 signature = v[1].replace("The code should start with:\n", "")
                 func_body = v[0].replace(signature, "")
                 temp_list.append(
@@ -572,7 +572,7 @@ class OptoPrimeV2(OptoPrime):
             instruction=self.objective if "#Instruction" not in mask else "",
             code=(
                 "\n".join([v for k, v in sorted(summary.graph)])
-                if self.optimizer_prompt_symbol_set.inputs_section_title not in mask
+                if self.optimizer_prompt_symbol_set.code_section_title not in mask  # Use the code section mask for the code section.
                 else ""
             ),
             documentation=(

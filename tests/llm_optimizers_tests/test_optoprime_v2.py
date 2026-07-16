@@ -10,7 +10,7 @@ from opto.utils.llm import LLM
 
 from opto import trace
 from opto.trace import node, bundle
-from opto.optimizers.optoprime_v2 import OptoPrimeV2, OptimizerPromptSymbolSet2
+from opto.optimizers.optoprime_v2 import OptoPrimeV2, OptimizerPromptSymbolSet, OptimizerPromptSymbolSet2
 
 # You can override for temporarly testing a specific optimizer ALL_OPTIMIZERS = [TextGrad] # [OptoPrimeMulti] ALL_OPTIMIZERS = [OptoPrime]
 
@@ -32,6 +32,53 @@ def clear_graph():
 @pytest.mark.skipif(not HAS_CREDENTIALS, reason=SKIP_REASON)
 def test_response_extraction():
     pass
+
+
+class CustomConstraintSymbolSet(OptimizerPromptSymbolSet):
+    constraint_tag = "guard"
+
+
+def test_code_section_mask_only_hides_code_section():
+    num = node(1, trainable=True)
+    result = num + 1
+    optimizer = OptoPrimeV2([num], use_json_object_format=False)
+
+    optimizer.zero_feedback()
+    optimizer.backward(result, "make this number bigger")
+
+    summary = optimizer.summarize()
+
+    code_masked = optimizer.problem_instance(
+        summary,
+        mask=[optimizer.optimizer_prompt_symbol_set.code_section_title],
+    )
+    inputs_masked = optimizer.problem_instance(
+        summary,
+        mask=[optimizer.optimizer_prompt_symbol_set.inputs_section_title],
+    )
+
+    assert code_masked.code == "", "# Code must hide the code section."
+    assert inputs_masked.code != "", "# Inputs must not hide the code section."
+    assert inputs_masked.inputs == "", "# Inputs must still hide the inputs section."
+
+
+def test_repr_node_value_respects_custom_constraint_tag_for_code_variables():
+    num = node(1, trainable=True)
+    optimizer = OptoPrimeV2(
+        [num],
+        use_json_object_format=False,
+        optimizer_prompt_symbol_set=CustomConstraintSymbolSet(),
+    )
+
+    rendered = optimizer.repr_node_value(
+        {"__code0": ("def f(x):\n    return x", "The code should start with:\ndef f(x):")},
+        node_tag=optimizer.optimizer_prompt_symbol_set.variable_tag,
+        value_tag=optimizer.optimizer_prompt_symbol_set.value_tag,
+        constraint_tag=optimizer.optimizer_prompt_symbol_set.constraint_tag,
+    )
+
+    assert "<guard>" in rendered, "Full code rendering must use custom constraint tags."
+    assert "<constraint>" not in rendered, "Full code rendering must not hardcode the default tag."
 
 
 def test_tag_template_change():
