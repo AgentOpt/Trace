@@ -40,6 +40,8 @@ class ObjectiveConfig:
             - "weighted": fall back to weighted scalarization.
             - "lexicographic": sort by metric names alphabetically.
             - "random_seeded": seeded random shuffle.
+        required_metrics: Metrics that must be present in every dict score.
+            Empty frozenset disables this check.
         seed: Random seed for deterministic tie-breaking.
 
         scalarize_dict: How to reduce dict scores to a scalar (when mode="scalar").
@@ -54,13 +56,18 @@ class ObjectiveConfig:
     missing_value: float = float("-inf")
     pareto_metrics: Optional[Tuple[str, ...]] = None
     tie_break: str = "weighted"
+    required_metrics: frozenset = field(default_factory=frozenset)
     seed: int = 0
     scalarize_dict: str = "score"
     score_key: str = "score"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.minimize, set):
             object.__setattr__(self, 'minimize', frozenset(self.minimize))
+        if isinstance(self.required_metrics, set):
+            object.__setattr__(
+                self, 'required_metrics', frozenset(self.required_metrics)
+            )
         if self.mode not in ("scalar", "weighted", "pareto"):
             raise ValueError(
                 f"mode must be 'scalar', 'weighted', or 'pareto', got '{self.mode}'"
@@ -84,6 +91,9 @@ class ObjectiveConfig:
             raise ValueError(
                 "pareto_metrics must be None (auto) or non-empty tuple"
             )
+        for metric in self.required_metrics:
+            if not isinstance(metric, str) or not metric:
+                raise ValueError("required_metrics must contain only non-empty strings")
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +136,20 @@ def to_score_dict(score: ScoreLike) -> Dict[str, float]:
 normalize_score = to_score_dict
 
 
+def validate_required_metrics(
+    score_dict: Dict[str, float], config: ObjectiveConfig
+) -> None:
+    """Fail fast when a score dict omits required objective metrics."""
+    if not config.required_metrics:
+        return
+    missing = sorted(set(config.required_metrics) - set(score_dict))
+    if missing:
+        raise ValueError(
+            "Missing required objective metrics: "
+            f"{missing}. Available metrics: {sorted(score_dict)}"
+        )
+
+
 def score_dict_to_scalar(score_dict: Dict[str, float],
                          config: ObjectiveConfig) -> float:
     """Reduce a score dict to a scalar according to ObjectiveConfig.
@@ -138,6 +162,7 @@ def score_dict_to_scalar(score_dict: Dict[str, float],
     This exists to avoid hard-coding any dict->scalar behavior in Guide/Evaluator.
     """
     sd = to_score_dict(score_dict)
+    validate_required_metrics(sd, config)
     sd = apply_minimize(sd, config.minimize)
 
     if config.scalarize_dict == "score":
@@ -173,6 +198,11 @@ def to_scalar_score(score: ScoreLike,
                 "to define reduction."
             )
         return score_dict_to_scalar(score, config)
+    if config is not None and config.required_metrics:
+        raise ValueError(
+            "ObjectiveConfig.required_metrics requires dict scores; "
+            f"got scalar score {score!r}"
+        )
     return float(score)
 
 
@@ -254,6 +284,23 @@ def pareto_rank(candidates: List[Dict[str, float]],
     return ranks
 
 
+def _prepare_score_dicts_for_objective_selection(
+    candidates: List[Tuple[ScoreLike, Any]], config: ObjectiveConfig
+) -> List[Dict[str, float]]:
+    """Prepare candidate scores so objective selection can maximize all metrics."""
+    score_dicts: List[Dict[str, float]] = []
+    for score, _ in candidates:
+        if config.required_metrics and not isinstance(score, dict):
+            raise ValueError(
+                "ObjectiveConfig.required_metrics requires dict scores; "
+                f"got scalar score {score!r}"
+            )
+        score_dict = to_score_dict(score)
+        validate_required_metrics(score_dict, config)
+        score_dicts.append(score_dict)
+    return [apply_minimize(score_dict, config.minimize) for score_dict in score_dicts]
+
+
 def select_best(candidates: List[Tuple[ScoreLike, Any]],
                 config: Optional[ObjectiveConfig] = None) -> int:
     """Select index of the single best candidate.
@@ -275,8 +322,7 @@ def select_best(candidates: List[Tuple[ScoreLike, Any]],
         scores = [to_scalar_score(score, config) for score, _ in candidates]
         return int(np.argmax(scores))
 
-    score_dicts = [to_score_dict(s) for s, _ in candidates]
-    score_dicts = [apply_minimize(sd, config.minimize) for sd in score_dicts]
+    score_dicts = _prepare_score_dicts_for_objective_selection(candidates, config)
 
     if config.mode == "weighted":
         weighted = [
@@ -337,8 +383,7 @@ def select_top_k(candidates: List[Tuple[ScoreLike, Any]],
         scores = [to_scalar_score(score, config) for score, _ in candidates]
         return list(np.argsort(scores)[::-1][:k])
 
-    score_dicts = [to_score_dict(s) for s, _ in candidates]
-    score_dicts = [apply_minimize(sd, config.minimize) for sd in score_dicts]
+    score_dicts = _prepare_score_dicts_for_objective_selection(candidates, config)
 
     if config.mode == "weighted":
         weighted = [

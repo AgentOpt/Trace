@@ -1,0 +1,56 @@
+{
+  "runs": [
+    {
+      "system_prompt": "Solve carefully and explain the reasoning before the final answer.",
+      "per_example": [
+        {
+          "error": 0.0,
+          "tokens_in": 23.0,
+          "tokens_out": 14.0
+        },
+        {
+          "error": 0.0,
+          "tokens_in": 23.0,
+          "tokens_out": 14.0
+        },
+        {
+          "error": 0.0,
+          "tokens_in": 25.0,
+          "tokens_out": 14.0
+        }
+      ],
+      "aggregate": {
+        "error": 0.0,
+        "tokens_in": 23.666666666666668,
+        "tokens_out": 14.0
+      }
+    },
+    {
+      "system_prompt": "Answer with the final number only. Be concise.",
+      "per_example": [
+        {
+          "error": 0.0,
+          "tokens_in": 21.0,
+          "tokens_out": 1.0
+        },
+        {
+          "error": 0.0,
+          "tokens_in": 21.0,
+          "tokens_out": 1.0
+        },
+        {
+          "error": 0.0,
+          "tokens_in": 23.0,
+          "tokens_out": 1.0
+        }
+      ],
+      "aggregate": {
+        "error": 0.0,
+        "tokens_in": 21.666666666666668,
+        "tokens_out": 1.0
+      }
+    }
+  ],
+  "selected_index": 1,
+  "selected_goal": "Answer with the final number only. Be concise."
+}

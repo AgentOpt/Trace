@@ -1,11 +1,14 @@
 from typing import List, Dict, Any, Union, Tuple, Optional, Callable
+import contextvars
 import json
 import pickle
 import re
 import copy
 import os
+import warnings
 from opto.utils.llm import LLM, AbstractModel
 from opto.trainer.suggest import Suggest
+
 
 def exact_match_metric(question, student_answer, info):
     """ Exact match metric """
@@ -96,6 +99,363 @@ class Guide:
     def __setstate__(self, state):
         self.__dict__.update(state)
 
+
+class UsageTrackingLLM:
+    """Wrap an LLM and record token usage for the current execution context.
+
+    The wrapper reads OpenAI-compatible usage metadata when available:
+    ``response.usage.prompt_tokens`` and ``response.usage.completion_tokens``.
+    Dict-shaped responses and ``input_tokens`` / ``output_tokens`` aliases are
+    also supported.
+
+    If usage metadata is missing, the wrapper warns once and estimates token
+    counts with a simple whitespace split by default. Set
+    ``estimate_missing=False`` to fail fast instead. Streaming usage is only
+    captured when the provider returns usage on the response object passed back
+    from the wrapped LLM.
+
+    The usage store is ``ContextVar``-backed, so concurrent evaluations do not
+    overwrite each other. ``__deepcopy__`` returns ``self`` intentionally:
+    trainer code may deep-copy agent and guide independently, and both copies
+    must keep sharing the same tracker instance.
+    """
+
+    def __init__(self, base_llm: Any, *, estimate_missing: bool = True) -> None:
+        if not callable(base_llm):
+            raise TypeError("base_llm must be callable")
+        self._base = base_llm
+        self.estimate_missing = estimate_missing
+        self._usage: contextvars.ContextVar[Optional[Dict[str, int]]] = (
+            contextvars.ContextVar("llm_token_usage", default=None)
+        )
+        self._usage_estimated: contextvars.ContextVar[bool] = contextvars.ContextVar(
+            "llm_token_usage_estimated", default=False
+        )
+        self._warned_missing_usage = False
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "UsageTrackingLLM":
+        memo[id(self)] = self
+        return self
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            base = self.__dict__["_base"]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+        return getattr(base, name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        messages = kwargs.get("messages", args[0] if args else None)
+        response = self._base(*args, **kwargs)
+        tokens_in, tokens_out, estimated = self._read_token_usage(
+            response=response,
+            messages=messages,
+        )
+        self._add_usage(tokens_in=tokens_in, tokens_out=tokens_out)
+        self._usage_estimated.set(self._usage_estimated.get() or estimated)
+        return response
+
+    def reset_usage(self) -> None:
+        """Clear token usage for the current execution context."""
+        self._usage.set(None)
+        self._usage_estimated.set(False)
+
+    def has_usage(self) -> bool:
+        """Return whether any usage was recorded in this execution context."""
+        return self._usage.get() is not None
+
+    def last_usage(self, *, reset: bool = False) -> Dict[str, int]:
+        """Return accumulated token usage for the current execution context.
+
+        Args:
+            reset: Clear the current context after reading when True.
+        """
+        usage = self._usage.get()
+        result = (
+            {"tokens_in": 0, "tokens_out": 0}
+            if usage is None
+            else {
+                "tokens_in": int(usage.get("tokens_in", 0)),
+                "tokens_out": int(usage.get("tokens_out", 0)),
+            }
+        )
+        if reset:
+            self.reset_usage()
+        return result
+
+    def last_usage_was_estimated(self) -> bool:
+        """Return whether any current usage metric used fallback estimation."""
+        return bool(self._usage_estimated.get())
+
+    def __getstate__(self) -> Dict[str, Any]:
+        state = self.__dict__.copy()
+        state["_usage"] = None
+        state["_usage_estimated"] = None
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._usage = contextvars.ContextVar("llm_token_usage", default=None)
+        self._usage_estimated = contextvars.ContextVar(
+            "llm_token_usage_estimated", default=False
+        )
+        self._warned_missing_usage = bool(
+            getattr(self, "_warned_missing_usage", False)
+        )
+
+    def _add_usage(self, *, tokens_in: int, tokens_out: int) -> None:
+        previous = self._usage.get() or {"tokens_in": 0, "tokens_out": 0}
+        self._usage.set(
+            {
+                "tokens_in": int(previous.get("tokens_in", 0)) + tokens_in,
+                "tokens_out": int(previous.get("tokens_out", 0)) + tokens_out,
+            }
+        )
+
+    def _read_token_usage(
+        self,
+        *,
+        response: Any,
+        messages: Any,
+    ) -> Tuple[int, int, bool]:
+        prompt_tokens, completion_tokens = self._extract_usage(response)
+        estimated = False
+
+        if prompt_tokens is None or completion_tokens is None:
+            if not self.estimate_missing:
+                raise ValueError(
+                    "LLM response did not include complete token usage. "
+                    "Use UsageTrackingLLM(..., estimate_missing=True) to "
+                    "allow estimates, or use a provider/model that returns "
+                    "response.usage."
+                )
+            estimated = True
+            self._warn_missing_usage_once()
+            if prompt_tokens is None:
+                prompt_tokens = self._estimate_prompt_tokens(messages)
+            if completion_tokens is None:
+                completion_tokens = self._estimate_completion_tokens(response)
+
+        return int(prompt_tokens or 0), int(completion_tokens or 0), estimated
+
+    def _warn_missing_usage_once(self) -> None:
+        """Warn once when the wrapped backend cannot provide exact token usage."""
+        if self._warned_missing_usage:
+            return
+        warnings.warn(
+            "The wrapped LLM backend returned a response without complete token "
+            "usage; UsageTrackingLLM is estimating token counts with whitespace "
+            "splitting. For exact token-aware objectives, use a backend that "
+            "returns OpenAI-compatible response.usage or set "
+            "estimate_missing=False to fail fast.",
+            UserWarning,
+            stacklevel=3,
+        )
+        self._warned_missing_usage = True
+
+    @classmethod
+    def _extract_usage(cls, response: Any) -> Tuple[Optional[int], Optional[int]]:
+        usage = cls._get_field(response, "usage")
+        prompt_tokens = cls._to_optional_int(
+            cls._get_field(usage, "prompt_tokens", "input_tokens")
+        )
+        completion_tokens = cls._to_optional_int(
+            cls._get_field(usage, "completion_tokens", "output_tokens")
+        )
+        return prompt_tokens, completion_tokens
+
+    @staticmethod
+    def _get_field(obj: Any, *names: str) -> Any:
+        if obj is None:
+            return None
+        for name in names:
+            value = None
+            if isinstance(obj, dict) and name in obj:
+                value = obj[name]
+            elif hasattr(obj, name):
+                value = getattr(obj, name)
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
+    def _to_optional_int(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _estimate_prompt_tokens(cls, messages: Any) -> int:
+        if not isinstance(messages, list):
+            return 0
+        return len(
+            " ".join(cls._message_to_text(message) for message in messages).split()
+        )
+
+    @classmethod
+    def _message_to_text(cls, message: Any) -> str:
+        if isinstance(message, dict):
+            return cls._content_to_text(message.get("content", ""))
+        return str(message)
+
+    @classmethod
+    def _content_to_text(cls, content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(cls._content_to_text(part) for part in content)
+        if isinstance(content, dict):
+            parts = []
+            for key in ("text", "content"):
+                if key in content:
+                    parts.append(cls._content_to_text(content[key]))
+            return " ".join(parts)
+        return str(content)
+
+    @classmethod
+    def _estimate_completion_tokens(cls, response: Any) -> int:
+        text = cls._completion_text(response)
+        return len(text.split()) if text else 0
+
+    @classmethod
+    def _completion_text(cls, response: Any) -> str:
+        if isinstance(response, str):
+            return response
+
+        choices = cls._get_field(response, "choices")
+        if not choices:
+            return ""
+
+        choice = choices[0]
+        message = cls._get_field(choice, "message")
+        content = cls._get_field(message, "content")
+        if content is None:
+            content = cls._get_field(choice, "text")
+        return "" if content is None else str(content)
+
+
+class TokenUsageAugmentingGuide(Guide):
+    """Add token usage metrics from a tracker to another guide's scores.
+
+    The tracker must expose ``last_usage()``. ``UsageTrackingLLM`` is the default
+    implementation, but custom LLM wrappers can be used if they follow the same
+    duck-typed interface. This stays composition-based so existing guides can be
+    augmented without inheritance changes.
+    """
+
+    def __init__(
+        self,
+        base_guide: Guide,
+        token_llm: Any,
+        *,
+        tokens_in_key: str = "tokens_in",
+        tokens_out_key: str = "tokens_out",
+        require_usage: bool = True,
+        reset_after_read: bool = True,
+    ) -> None:
+        if not isinstance(base_guide, Guide):
+            raise TypeError("base_guide must be a Guide")
+        if not callable(getattr(token_llm, "last_usage", None)):
+            raise TypeError("token_llm must expose a callable last_usage() method")
+        if not tokens_in_key or not tokens_out_key:
+            raise ValueError("token metric keys must be non-empty strings")
+        self._base = base_guide
+        self._token_llm = token_llm
+        self.tokens_in_key = tokens_in_key
+        self.tokens_out_key = tokens_out_key
+        self.require_usage = require_usage
+        self.reset_after_read = reset_after_read
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "TokenUsageAugmentingGuide":
+        cls = type(self)
+        new = cls.__new__(cls)
+        memo[id(self)] = new
+        new._base = copy.deepcopy(self._base, memo)
+        new._token_llm = self._token_llm
+        new.tokens_in_key = self.tokens_in_key
+        new.tokens_out_key = self.tokens_out_key
+        new.require_usage = self.require_usage
+        new.reset_after_read = self.reset_after_read
+        return new
+
+    def get_feedback(
+        self,
+        query: str,
+        response: str,
+        reference: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Tuple[float, str]:
+        reward, feedback = self._base.get_feedback(
+            query,
+            response,
+            reference=reference,
+            **kwargs,
+        )
+        usage = self._usage_metrics()
+        return (
+            float(reward),
+            (
+                f"{feedback} "
+                f"{self.tokens_in_key}={usage[self.tokens_in_key]:.0f} "
+                f"{self.tokens_out_key}={usage[self.tokens_out_key]:.0f}"
+            ),
+        )
+
+    def get_score_dict(
+        self,
+        query: str,
+        response: str,
+        reference: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, float]:
+        score_dict = dict(
+            self._base.get_score_dict(
+                query,
+                response,
+                reference=reference,
+                **kwargs,
+            )
+        )
+        usage = self._usage_metrics()
+        collisions = sorted(set(score_dict).intersection(usage))
+        if collisions:
+            raise ValueError(
+                "Base guide already emitted token metric keys: "
+                f"{collisions}. Use custom tokens_in_key/tokens_out_key."
+            )
+        score_dict.update(usage)
+        return score_dict
+
+    def _usage_metrics(self) -> Dict[str, float]:
+        has_usage = getattr(self._token_llm, "has_usage", None)
+        if self.require_usage and callable(has_usage) and not has_usage():
+            raise RuntimeError(
+                "No token usage was recorded before reading guide metrics. "
+                "Ensure the evaluated agent uses the same UsageTrackingLLM "
+                "instance passed to TokenUsageAugmentingGuide."
+            )
+
+        try:
+            usage = self._token_llm.last_usage(reset=self.reset_after_read)
+        except TypeError:
+            usage = self._token_llm.last_usage()
+            reset_usage = getattr(self._token_llm, "reset_usage", None)
+            if self.reset_after_read and callable(reset_usage):
+                reset_usage()
+
+        return {
+            self.tokens_in_key: float(
+                usage.get("tokens_in", usage.get(self.tokens_in_key, 0))
+            ),
+            self.tokens_out_key: float(
+                usage.get("tokens_out", usage.get(self.tokens_out_key, 0))
+            ),
+        }
 
 
 class LLMJudge(Guide):

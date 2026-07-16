@@ -253,7 +253,7 @@ Key features:
 - **Vector scores** — `Guide.get_score_dict()` returns `Dict[str, float]` with named metrics
 - **Weighted scalarization** and **Pareto dominance** ranking via `ObjectiveConfig`
 - Supported in `BasicSearchAlgorithm`, `BeamsearchAlgorithm`, and `BeamsearchHistoryAlgorithm`
-- Token-minimization pattern using `UsageTrackingLLM` + `TokenUsageAugmentingGuide`
+- **Token-aware objectives** — wrap an agent LLM with `UsageTrackingLLM`, wrap the task guide with `TokenUsageAugmentingGuide`, then set `ObjectiveConfig.required_metrics` so runs fail early if `error`, `tokens_in`, or `tokens_out` are missing. This supports goals such as "solve GSM8K correctly while minimizing prompt and completion tokens."
 
 Canonical notebooks:
 
@@ -262,6 +262,7 @@ Canonical notebooks:
 | [multiobjective_quickstart](examples/notebooks/multiobjective_quickstart.ipynb) | Core vector-score infrastructure and BasicSearch integration |
 | [multiobjective_trainers](examples/notebooks/multiobjective_trainers.ipynb) | Beamsearch and PrioritySearch multi-objective support |
 | [multiobjective_bbeh_langgraph](examples/notebooks/multiobjective_bbeh_langgraph.ipynb) | Real LLM task: BBEH boolean expressions with accuracy + execution time |
+| [multiobjective_token_usage_gsm8k_demo](examples/notebooks/multiobjective_token_usage_gsm8k_demo.ipynb) | GSM8K-style objective that minimizes answer error, prompt tokens, and completion tokens |
 
 Trace-Bench multi-objective benchmarks (in [AgentOpt/Trace-Bench](https://github.com/AgentOpt/Trace-Bench)):
 
